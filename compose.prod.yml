@@ -1,0 +1,53 @@
+# 手动部署： bash deploy.sh
+# docker compose --env-file .env.production -f compose.yml -f compose.prod.yml up -d
+services:
+  db:
+    restart: always
+    ports: !override []
+
+  backend:
+    image: ${DOCKER_REGISTRY}/${DOCKER_IMAGE}:${DOCKER_TAG}
+    env_file: .env
+    restart: always
+    depends_on:
+      db:
+        condition: service_healthy
+        restart: true
+
+  traefik:
+    image: traefik:v3.3
+    restart: always
+    command:
+      - "--providers.file=true"
+      - "--providers.file.filename=/etc/traefik/dynamic_conf.yml"
+      - "--entrypoints.api.address=:80"
+    ports:
+      - "80:80"
+    volumes:
+      - ./traefik_dynamic.yml:/etc/traefik/dynamic_conf.yml:ro
+
+  db_migrate:
+    image: ${DOCKER_REGISTRY}/${DOCKER_IMAGE}:${DOCKER_TAG}
+    env_file: .env
+    depends_on:
+      db:
+        condition: service_healthy
+    command: alembic upgrade head
+    profiles:
+      - migrate
+
+  db_backup:
+    image: postgres:16-alpine
+    restart: always
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER?variable not set}
+      POSTGRES_DB: ${POSTGRES_DB?variable not set}
+      PGPASSWORD: ${POSTGRES_PASSWORD?variable not set}
+    depends_on:
+      db:
+        condition: service_healthy
+    volumes:
+      - ./db_backup/backup.sh:/usr/local/bin/backup.sh:ro
+      - ./db_backup/crontab:/etc/crontabs/root:ro
+      - ./db_backup:/db_backup
+    entrypoint: ["crond", "-f", "-l", "2"]

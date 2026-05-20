@@ -1,0 +1,31 @@
+name: Test Docker Compose
+
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+    types:
+      - opened
+      - synchronize
+
+jobs:
+
+  test-docker-compose:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Build image
+        run: |
+          cp .env.prod .env
+          source .env
+          docker build -t ${DOCKER_REGISTRY}/${DOCKER_IMAGE}:${DOCKER_TAG} .
+
+      - name: Deploy
+        run: bash deploy.sh
+
+      - name: Cleanup
+        if: always()
+        run: docker compose -f compose.yml -f compose.prod.yml down -v --remove-orphans
