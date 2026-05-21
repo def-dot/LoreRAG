@@ -27,7 +27,7 @@ async def store_chunks(chunks: list[dict[str, Any]], db: AsyncSession) -> int:
     texts = [c["enriched_text"] for c in chunks]
     vectors = encode_batch(texts)
 
-    for chunk_data, vec in zip(chunks, vectors):
+    for chunk_data, vec in zip(chunks, vectors, strict=True):
         meta = chunk_data["metadata"]
         raw = chunk_data["raw_text"]
         enriched = chunk_data["enriched_text"]
@@ -58,9 +58,7 @@ async def store_chunks(chunks: list[dict[str, Any]], db: AsyncSession) -> int:
     return len(chunks)
 
 
-async def search(
-    query: str, db: AsyncSession, top_k: int = 5
-) -> list[SearchResult]:
+async def search(query: str, db: AsyncSession, top_k: int = 5) -> list[SearchResult]:
     """
     混合检索：稠密向量相似度 + 全文检索 RRF 融合
 
@@ -136,8 +134,8 @@ async def list_documents(db: AsyncSession) -> list[DocumentListItem]:
     """列出所有已入库文档及其切片数量"""
     stmt = (
         select(
-            DocumentChunk.file_name,
-            func.count(DocumentChunk.id).label("chunk_count"),
+            DocumentChunk.file_name,  # type: ignore[call-overload]
+            func.count(DocumentChunk.id).label("chunk_count"),  # type: ignore[arg-type]
         )
         .group_by(DocumentChunk.file_name)
         .order_by(DocumentChunk.file_name)
@@ -148,22 +146,18 @@ async def list_documents(db: AsyncSession) -> list[DocumentListItem]:
     results: list[DocumentListItem] = []
     for row in rows:
         file_name = row[0]
-        page_stmt = select(func.unnest(DocumentChunk.page_numbers)).where(
-            DocumentChunk.file_name == file_name
-        )
+        page_stmt = select(func.unnest(DocumentChunk.page_numbers)).where(DocumentChunk.file_name == file_name)
         pages = sorted(set((await db.execute(page_stmt)).scalars().all()))
-        results.append(
-            DocumentListItem(file_name=file_name, chunk_count=row[1], page_numbers=pages)
-        )
+        results.append(DocumentListItem(file_name=file_name, chunk_count=row[1], page_numbers=pages))
 
     return results
 
 
 async def delete_document(file_name: str, db: AsyncSession) -> int:
     """删除文档的所有切片，返回删除数量"""
-    stmt = delete(DocumentChunk).where(DocumentChunk.file_name == file_name)
+    stmt = delete(DocumentChunk).where(DocumentChunk.file_name == file_name)  # type: ignore[arg-type]
     result = await db.execute(stmt)
     await db.commit()
-    deleted = result.rowcount  # type: ignore[union-attr]
+    deleted = result.rowcount  # type: ignore[attr-defined]
     logger.info("Deleted %d chunks for %s", deleted, file_name)
-    return deleted
+    return deleted  # type: ignore[no-any-return]

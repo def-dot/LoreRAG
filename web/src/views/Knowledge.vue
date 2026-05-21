@@ -13,14 +13,14 @@ async function fetchDocuments() {
   loading.value = true
   try {
     const res = await getDocuments()
-    documents.value = res.data.data.items
+    documents.value = res.data.items
   } finally {
     loading.value = false
   }
 }
 
-async function handleUpload(options: { file: UploadFile }) {
-  const file = options.file.raw
+async function handleUpload(uploadFile: UploadFile) {
+  const file = uploadFile.raw
   if (!file) return
 
   const ext = file.name.split('.').pop()?.toLowerCase()

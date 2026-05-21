@@ -1,6 +1,7 @@
 """VLM 视觉语言模型服务 — 抽象接口 + Mock / Qwen 实现"""
 
 from abc import ABC, abstractmethod
+from typing import Any
 
 from app.core.config import settings
 
@@ -55,8 +56,8 @@ class QwenVLService(VLMService):
             },
         )
         resp.raise_for_status()
-        data = resp.json()
-        return data["choices"][0]["message"]["content"]
+        data: dict[str, Any] = resp.json()
+        return str(data["choices"][0]["message"]["content"])
 
 
 def get_vlm_service() -> VLMService:

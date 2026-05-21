@@ -1,7 +1,5 @@
 """RAG 请求/响应 Schema"""
 
-from typing import Any
-
 from pydantic import BaseModel, Field
 
 
@@ -34,7 +32,7 @@ class UploadResponse(BaseModel):
     """文档上传响应"""
 
     file_name: str = Field(description="文件名")
-    chunk_count: int = Field(description="切片数量")
+    chunk_count: int = Field(default=0, description="切片数量")
     status: str = Field(default="processing", description="处理状态")
 
 

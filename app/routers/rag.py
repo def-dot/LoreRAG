@@ -4,7 +4,7 @@ import asyncio
 import os
 from typing import Any
 
-from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, UploadFile, status
+from fastapi import APIRouter, BackgroundTasks, HTTPException, UploadFile, status
 
 from app.core.config import settings
 from app.core.deps import SessionDep
@@ -23,10 +23,9 @@ logger = get_logger(__name__)
 router = APIRouter(prefix="/rag", tags=["RAG 知识库"])
 
 
-async def _process_and_store(file_path: str, db_url: str) -> None:
+async def _process_and_store(file_path: str) -> None:
     """后台任务：解析文档 → 切片 → 计算向量 → 入库"""
-    from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
-    from sqlmodel.ext.asyncio.session import AsyncSession
+    from app.core.database import AsyncSessionLocal
 
     try:
         chunks = await asyncio.to_thread(process_document, file_path)
@@ -34,11 +33,8 @@ async def _process_and_store(file_path: str, db_url: str) -> None:
             logger.warning("No chunks produced from %s", file_path)
             return
 
-        engine = create_async_engine(db_url, pool_size=5, max_overflow=5)
-        session_factory = async_sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
-        async with session_factory() as db:
+        async with AsyncSessionLocal() as db:
             await rag_service.store_chunks(chunks, db)
-        await engine.dispose()
         logger.info("Document processed successfully: %s (%d chunks)", file_path, len(chunks))
     except Exception:
         logger.exception("Failed to process document: %s", file_path)
@@ -77,8 +73,7 @@ async def upload_document(
         f.write(content)
 
     # 后台异步处理
-    db_url = str(settings.DATABASE_URL)
-    background_tasks.add_task(_process_and_store, file_path, db_url)
+    background_tasks.add_task(_process_and_store, file_path)
 
     return UploadResponse(file_name=file.filename, status="processing")  # type: ignore[arg-type]
 

@@ -1,15 +1,17 @@
 """BGE-M3 向量嵌入服务 — 单例懒加载"""
 
+from __future__ import annotations
+
 from functools import lru_cache
+
+from sentence_transformers import SentenceTransformer
 
 from app.core.config import settings
 
 
 @lru_cache(maxsize=1)
-def _get_model():
-    from sentence_transformers import SentenceTransformer
-
-    return SentenceTransformer(settings.EMBEDDING_MODEL)
+def _get_model() -> SentenceTransformer:
+    return SentenceTransformer(settings.EMBEDDING_MODEL)  # type: ignore[no-any-return]
 
 
 def encode(text: str) -> list[float]:
