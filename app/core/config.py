@@ -39,6 +39,16 @@ class Settings(BaseSettings):
     FEISHU_WEBHOOK_URL: str = ""
     SENTRY_WEBHOOK_SECRET: str = ""
 
+    # RAG
+    UPLOAD_DIR: str = "uploads"
+    EMBEDDING_MODEL: str = "BAAI/bge-m3"
+    EMBEDDING_DIMENSION: int = 1024
+    VLM_PROVIDER: str = "mock"  # "mock" | "qwen"
+    VLM_API_URL: str = ""
+    VLM_API_KEY: str = ""
+    CHUNK_SIZE: int = 1500
+    CHUNK_OVERLAP: int = 200
+
     model_config = {"env_file": ".env", "env_file_encoding": "utf-8"}
 
 

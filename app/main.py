@@ -10,7 +10,7 @@ from app.core.config import settings
 from app.core.exceptions import register_exception_handlers
 from app.core.logging import get_logger, setup_logging
 from app.core.middleware import access_log_middleware
-from app.routers import auth, external_api, items, system, users, webhooks
+from app.routers import auth, external_api, items, rag, system, users, webhooks
 from app.utils import init_sentry
 
 logger = get_logger(__name__)
@@ -62,6 +62,7 @@ app.include_router(auth.router, prefix=API_V1)
 app.include_router(users.router, prefix=API_V1)
 app.include_router(items.router, prefix=API_V1)
 app.include_router(external_api.router, prefix=API_V1)
+app.include_router(rag.router, prefix=API_V1)
 app.include_router(webhooks.router)
 app.include_router(system.router)
 
