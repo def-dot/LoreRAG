@@ -11,7 +11,6 @@ from app.core.exceptions import register_exception_handlers
 from app.core.logging import get_logger, setup_logging
 from app.core.middleware import access_log_middleware
 from app.routers import auth, external_api, items, rag, system, users, webhooks
-from app.utils import init_sentry
 
 logger = get_logger(__name__)
 
@@ -19,7 +18,7 @@ logger = get_logger(__name__)
 # ---------- lifespan：应用启动/关闭时执行 ----------
 @asynccontextmanager
 async def lifespan(app: FastAPI) -> Any:
-    init_sentry()
+    # init_sentry()
     setup_logging()
     # try:
     #     import subprocess
