@@ -1,8 +1,8 @@
-"""DocumentChunk 模型 — pgvector 向量检索 + TSVECTOR 全文检索"""
+"""DocumentChunk 模型 — pgvector 稠密检索 + JSONB 稀疏词权重检索"""
 
 from pgvector.sqlalchemy import VECTOR  # type: ignore[import-untyped]
 from sqlalchemy import Text
-from sqlalchemy.dialects.postgresql import ARRAY, INTEGER, TSVECTOR
+from sqlalchemy.dialects.postgresql import ARRAY, INTEGER, JSONB
 from sqlmodel import Field, SQLModel
 
 from app.core.config import settings
@@ -21,7 +21,7 @@ class DocumentChunk(SQLModel, table=True):
 
     dense_vector: list[float] | None = Field(default=None, sa_type=VECTOR(settings.EMBEDDING_DIMENSION))
 
-    sparse_vector: str | None = Field(default=None, sa_type=TSVECTOR)
+    sparse_lexicon: dict | None = Field(default=None, sa_type=JSONB)
 
 
 class DocumentInfo(SQLModel):

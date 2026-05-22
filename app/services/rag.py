@@ -36,10 +36,10 @@ async def store_chunks(chunks: list[dict[str, Any]], db: AsyncSession) -> int:
         stmt = text("""
             INSERT INTO document_chunks
                 (file_name, page_numbers, heading_context, raw_content, enriched_content,
-                 dense_vector, c_lexicon)
+                 dense_vector, sparse_lexicon)
             VALUES
                 (:file_name, :page_numbers, :heading_context, :raw_content, :enriched_content,
-                 CAST(:dense_vector AS vector), :sparse_lexicon::jsonb)
+                 CAST(:dense_vector AS vector), CAST(:sparse_lexicon AS jsonb))
         """)
         await db.execute(
             stmt,
