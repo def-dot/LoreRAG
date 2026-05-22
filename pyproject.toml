@@ -1,7 +1,7 @@
 [project]
-name = "fastapi-template"
+name = "lorerag"
 version = "1.0.0"
-description = "FastAPI Template — RAG 多模态知识库"
+description = "Lore Rag — RAG 多模态知识库"
 requires-python = ">=3.12"
 dependencies = [
     "fastapi[standard]==0.115.12",
