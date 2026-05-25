@@ -10,6 +10,7 @@ from app.core.logging import get_logger
 from app.models.document import DocumentChunk
 from app.schemas.rag import DocumentListItem, SearchResult
 from app.services.embedding import encode_hybrid, encode_hybrid_batch
+from app.core.database import AsyncSessionLocal
 
 logger = get_logger(__name__)
 
@@ -19,7 +20,7 @@ def _vector_to_str(vec: list[float]) -> str:
     return "[" + ",".join(str(v) for v in vec) + "]"
 
 
-async def store_chunks(chunks: list[dict[str, Any]], db: AsyncSession) -> int:
+async def store_chunks(chunks: list[dict[str, Any]]) -> int:
     """
     将切片批量写入数据库（含稠密向量 + 稀疏词权重计算）
 
@@ -28,33 +29,34 @@ async def store_chunks(chunks: list[dict[str, Any]], db: AsyncSession) -> int:
     texts = [c["enriched_text"] for c in chunks]
     hybrid_outputs = encode_hybrid_batch(texts)
 
-    for chunk_data, hybrid in zip(chunks, hybrid_outputs, strict=True):
-        meta = chunk_data["metadata"]
-        raw = chunk_data["raw_text"]
-        enriched = chunk_data["enriched_text"]
+    async with AsyncSessionLocal() as db:
+        for chunk_data, hybrid in zip(chunks, hybrid_outputs, strict=True):
+            meta = chunk_data["metadata"]
+            raw = chunk_data["raw_text"]
+            enriched = chunk_data["enriched_text"]
 
-        stmt = text("""
-            INSERT INTO document_chunks
-                (file_name, page_numbers, heading_context, raw_content, enriched_content,
-                 dense_vector, sparse_lexicon)
-            VALUES
-                (:file_name, :page_numbers, :heading_context, :raw_content, :enriched_content,
-                 CAST(:dense_vector AS vector), CAST(:sparse_lexicon AS jsonb))
-        """)
-        await db.execute(
-            stmt,
-            {
-                "file_name": meta["source_file"],
-                "page_numbers": meta["page_numbers"],
-                "heading_context": meta["heading_context"],
-                "raw_content": raw,
-                "enriched_content": enriched,
-                "dense_vector": _vector_to_str(hybrid["dense"]),
-                "sparse_lexicon": json.dumps(hybrid["sparse"]),
-            },
-        )
+            stmt = text("""
+                INSERT INTO document_chunks
+                    (file_name, page_numbers, heading_context, raw_content, enriched_content,
+                     dense_vector, sparse_lexicon)
+                VALUES
+                    (:file_name, :page_numbers, :heading_context, :raw_content, :enriched_content,
+                     CAST(:dense_vector AS vector), CAST(:sparse_lexicon AS jsonb))
+            """)
+            await db.execute(
+                stmt,
+                {
+                    "file_name": meta["source_file"],
+                    "page_numbers": meta["page_numbers"],
+                    "heading_context": meta["heading_context"],
+                    "raw_content": raw,
+                    "enriched_content": enriched,
+                    "dense_vector": _vector_to_str(hybrid["dense"]),
+                    "sparse_lexicon": json.dumps(hybrid["sparse"]),
+                },
+            )
 
-    await db.commit()
+        await db.commit()
     logger.info("Stored %d chunks for %s", len(chunks), chunks[0]["metadata"]["source_file"])
     return len(chunks)
 
@@ -93,11 +95,14 @@ async def search(query: str, db: AsyncSession, top_k: int = 5) -> list[SearchRes
         LIMIT :limit
     """)
     sparse_rows = (
-        await db.execute(sparse_sql, {
-            "q_weights": json.dumps(hybrid["sparse"]),
-            "tokens": tokens,
-            "limit": top_k * 2,
-        })
+        await db.execute(
+            sparse_sql,
+            {
+                "q_weights": json.dumps(hybrid["sparse"]),
+                "tokens": tokens,
+                "limit": top_k * 2,
+            },
+        )
     ).fetchall()
 
     # RRF 融合

@@ -10,6 +10,7 @@ from typing import Any
 def _get_model() -> Any:
     """延迟导入 FlagEmbedding，先确保模型已缓存到本地"""
     from FlagEmbedding import BGEM3FlagModel  # type: ignore[import-untyped]
+
     return BGEM3FlagModel(
         "./hub/bge-m3",
         use_fp16=True,
@@ -68,8 +69,10 @@ def encode_hybrid_batch(texts: list[str]) -> list[dict[str, Any]]:
     output = model.encode(texts, return_dense=True, return_sparse=True)
     results = []
     for dense_vec, lexical in zip(output["dense_vecs"], output["lexical_weights"]):
-        results.append({
-            "dense": dense_vec.tolist(),
-            "sparse": _decode_sparse_weights(lexical),
-        })
+        results.append(
+            {
+                "dense": dense_vec.tolist(),
+                "sparse": _decode_sparse_weights(lexical),
+            }
+        )
     return results

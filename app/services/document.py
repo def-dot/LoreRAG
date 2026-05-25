@@ -1,7 +1,6 @@
 """文档处理服务 — Docling 解析 + 多模态回填 + 智能切片"""
 
 import os
-from collections import defaultdict
 from typing import Any
 
 from docling.chunking import HybridChunker  # type: ignore[attr-defined]
@@ -36,16 +35,14 @@ def _init_converter() -> DocumentConverter:
     )
 
 
-def _collect_picture_descriptions(
-    doc: Any, vlm: Any
-) -> tuple[dict[str, str], dict[str, int]]:
-    """遍历文档元素，用 VLM 生成图片描述，返回 {self_ref: description} 和 {self_ref: position}。"""
-    picture_descs: dict[str, str] = {}
-    item_positions: dict[str, int] = {}
+def _inject_picture_descriptions(doc: Any) -> None:
+    """单次遍历：用 VLM 生成图片描述，注入到相邻文本元素（优先前一个，没有则挂后一个）。"""
+    desc_buffer: list[str] = []
+    last_text_element: Any = None
 
-    for idx, (element, _level) in enumerate(doc.iterate_items()):
-        item_positions[element.self_ref] = idx
+    vlm = get_vlm_service()
 
+    for element, _level in doc.iterate_items():
         if (
             getattr(element, "label", None) == "picture"
             and hasattr(element, "image")
@@ -55,53 +52,22 @@ def _collect_picture_descriptions(
             try:
                 element.image.pil_image.save(tmp_path)
                 description = vlm.describe_image(tmp_path)
-                picture_descs[element.self_ref] = description
             finally:
                 if os.path.exists(tmp_path):
                     os.remove(tmp_path)
 
-    return picture_descs, item_positions
-
-
-def _map_pictures_to_chunks(
-    picture_descs: dict[str, str],
-    item_positions: dict[str, int],
-    doc_chunks: list[Any],
-) -> dict[int, list[str]]:
-    """根据文档遍历顺序，将每张图片的描述映射到最近的 chunk（优先前一个）。"""
-    chunk_descs: dict[int, list[str]] = defaultdict(list)
-    if not picture_descs:
-        return chunk_descs
-
-    # 预计算每个 chunk 的 doc_item 位置
-    chunk_item_positions: list[list[int]] = []
-    for chunk in doc_chunks:
-        positions = [
-            item_positions[di.self_ref]
-            for di in chunk.meta.doc_items
-            if di.self_ref in item_positions
-        ]
-        chunk_item_positions.append(positions)
-
-    for pic_ref, desc in picture_descs.items():
-        pic_pos = item_positions.get(pic_ref)
-        if pic_pos is None:
+            if last_text_element is not None:
+                last_text_element.text += "\n" + description
+            else:
+                desc_buffer.append(description)
             continue
 
-        # 找到距离该图片最近的 chunk（严格 < 保证等距时取前一个）
-        best_chunk_idx = 0
-        best_distance = float("inf")
-        for ci, positions in enumerate(chunk_item_positions):
-            if not positions:
-                continue
-            closest = min(abs(p - pic_pos) for p in positions)
-            if closest < best_distance:
-                best_distance = closest
-                best_chunk_idx = ci
+        if desc_buffer:
+            element.text = "\n".join(desc_buffer) + "\n" + element.text
+            desc_buffer.clear()
 
-        chunk_descs[best_chunk_idx].append(desc)
-
-    return chunk_descs
+        if getattr(element, "label", None) not in ("title", "section_header"):
+            last_text_element = element
 
 
 def process_document(file_path: str) -> list[dict[str, Any]]:
@@ -113,23 +79,16 @@ def process_document(file_path: str) -> list[dict[str, Any]]:
     converter = _init_converter()
     result = converter.convert(file_path)
     doc = result.document
-    vlm = get_vlm_service()
 
-    picture_descs, item_positions = _collect_picture_descriptions(doc, vlm)
+    _inject_picture_descriptions(doc)
 
     chunker = HybridChunker(max_tokens=settings.CHUNK_SIZE, overlap_tokens=settings.CHUNK_OVERLAP)  # type: ignore[call-arg]
     doc_chunks = list(chunker.chunk(doc))
 
-    chunk_descs = _map_pictures_to_chunks(picture_descs, item_positions, doc_chunks)
-
-    # 阶段 4：格式化输出
+    # 格式化输出
     formatted: list[dict[str, Any]] = []
     for i, chunk in enumerate(doc_chunks):
         chunk_text = chunk.text
-
-        # 追加属于本 chunk 的图片描述
-        if i in chunk_descs:
-            chunk_text += "\n" + "\n".join(chunk_descs[i])
 
         headings = getattr(chunk.meta, "headings", []) or []
         heading_ctx = " > ".join(h if isinstance(h, str) else h.text for h in headings) if headings else "Root"

@@ -25,16 +25,13 @@ router = APIRouter(prefix="/rag", tags=["RAG 知识库"])
 
 async def _process_and_store(file_path: str) -> None:
     """后台任务：解析文档 → 切片 → 计算向量 → 入库"""
-    from app.core.database import AsyncSessionLocal
-
     try:
         chunks = await asyncio.to_thread(process_document, file_path)
         if not chunks:
             logger.warning("No chunks produced from %s", file_path)
             return
 
-        async with AsyncSessionLocal() as db:
-            await rag_service.store_chunks(chunks, db)
+        await rag_service.store_chunks(chunks)
         logger.info("Document processed successfully: %s (%d chunks)", file_path, len(chunks))
     except Exception:
         logger.exception("Failed to process document: %s", file_path)
