@@ -62,11 +62,10 @@ def _inject_picture_descriptions(doc: Any) -> None:
                 desc_buffer.append(description)
             continue
 
-        if desc_buffer:
-            element.text = "\n".join(desc_buffer) + "\n" + element.text
-            desc_buffer.clear()
-
         if getattr(element, "label", None) not in ("title", "section_header"):
+            if desc_buffer:
+                element.text = "\n".join(desc_buffer) + "\n" + element.text
+                desc_buffer.clear()
             last_text_element = element
 
 
