@@ -20,7 +20,6 @@ from app.services.vlm import get_vlm_service
 def _init_converter() -> DocumentConverter:
     """初始化 Docling 转换引擎：RapidOCR + 公式 + 图片提取"""
     pipeline_options = PdfPipelineOptions()
-    pipeline_options = PdfPipelineOptions()
     pipeline_options.ocr_options = RapidOcrOptions()
     pipeline_options.do_ocr = True
     pipeline_options.do_formula_enrichment = True
