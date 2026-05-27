@@ -1,113 +1,108 @@
-"""
-使用 CLIP 模型进行零样本图片分类。
-无需 docling，只需 transformers + torch。
-首次运行会自动下载模型 (~600MB)。
-"""
-from __future__ import annotations
+"""test: 使用 docling do_chart_extraction 解析文档图表中的数值"""
 
-from pathlib import Path
+import os
+import sys
 
-import torch
-from PIL import Image
-from transformers import CLIPModel, CLIPProcessor
-
-# ---------------------------------------------------------------------------
-# 可自定义分类标签
-# ---------------------------------------------------------------------------
-CANDIDATE_LABELS = [
-    "a bar chart",
-    "a pie chart",
-    "a line chart",
-    "a scatter plot",
-    "a flowchart or diagram",
-    "a table",
-    "a natural photograph",
-    "a screenshot of a user interface",
-    "a map",
-    "a mathematical formula",
-    "a logo or icon",
-    "a scanned document page with text only",
-]
-
-MODEL_ID = "openai/clip-vit-base-patch32"
+from docling.datamodel.base_models import InputFormat
+from docling.datamodel.pipeline_options import (
+    ChartExtractionModelOptions,
+    PdfPipelineOptions,
+    RapidOcrOptions,
+)
+from docling.document_converter import DocumentConverter, PdfFormatOption
 
 
-def load_model(model_id: str = MODEL_ID) -> tuple[CLIPModel, CLIPProcessor]:
-    """加载 CLIP 模型和处理器。"""
-    model = CLIPModel.from_pretrained(model_id)
-    processor = CLIPProcessor.from_pretrained(model_id)
-    model.eval()
-    return model, processor
+def parse_document(file_path: str) -> None:
+    """解析文档，提取文本与图表数值"""
+    if not os.path.isfile(file_path):
+        print(f"文件不存在: {file_path}")
+        sys.exit(1)
 
-
-def classify_image(
-    image: Image.Image,
-    model: CLIPModel,
-    processor: CLIPProcessor,
-    labels: list[str] | None = None,
-) -> list[tuple[str, float]]:
-    """对单张 PIL 图片进行零样本分类，返回 (标签, 置信度) 列表，按置信度降序排列。"""
-    if labels is None:
-        labels = CANDIDATE_LABELS
-
-    inputs = processor(
-        text=labels,
-        images=image,
-        return_tensors="pt",
-        padding=True,
+    pipeline_options = PdfPipelineOptions()
+    pipeline_options.ocr_options = RapidOcrOptions()
+    pipeline_options.do_ocr = True
+    pipeline_options.generate_page_images = True
+    # 启用图表提取：csv + 摘要
+    pipeline_options.do_chart_extraction = True
+    pipeline_options.chart_extraction_options = ChartExtractionModelOptions(
+        chart2csv=True,
+        chart2summary=True,
     )
 
-    with torch.no_grad():
-        outputs = model(**inputs)
-        logits_per_image = outputs.logits_per_image  # shape: (1, num_labels)
-        probs = logits_per_image.softmax(dim=1).squeeze(0)
+    converter = DocumentConverter(
+        format_options={
+            InputFormat.PDF: PdfFormatOption(pipeline_options=pipeline_options),
+        }
+    )
 
-    results = [(labels[i], round(probs[i].item(), 4)) for i in range(len(labels))]
-    results.sort(key=lambda x: x[1], reverse=True)
-    return results
+    result = converter.convert(file_path)
+    doc = result.document
+
+    chart_count = 0
+
+    for element, level in doc.iterate_items():
+        label = getattr(element, "label", None)
+        text = getattr(element, "text", "")
+
+        # 图表 / 图片
+        if label == "picture":
+            chart_count += 1
+            print("=" * 60)
+            print(f"[图表 #{chart_count}] 层级: {level}")
+            if text:
+                print(f"  伴随文本: {text[:200]}")
+
+            # 保存图片
+            if hasattr(element, "image") and element.image is not None:
+                out_path = f"test_chart_{chart_count}.png"
+                element.image.pil_image.save(out_path)
+                print(f"  图片已保存: {out_path}")
+
+            # 提取 chart extraction 结果
+            meta = getattr(element, "meta", None)
+            if meta is not None:
+                # CSV 数值数据 → 表格形式输出
+                tabular = getattr(meta, "tabular_chart", None)
+                if tabular is not None and hasattr(tabular, "chart_data"):
+                    chart_data = tabular.chart_data
+                    print(f"  图表数据 (CSV):")
+                    if hasattr(chart_data, "grid"):
+                        for row in chart_data.grid:
+                            cells = [c.text for c in row]
+                            print(f"    {' | '.join(cells)}")
+
+                # 文字摘要
+                desc = getattr(meta, "description", None)
+                if desc is not None:
+                    desc_text = getattr(desc, "text", str(desc))
+                    print(f"  图表摘要: {desc_text}")
+
+                # Python 代码
+                code = getattr(meta, "code", None)
+                if code is not None:
+                    code_text = getattr(code, "text", str(code))
+                    print(f"  图表代码:\n{code_text}")
+
+            if meta is None:
+                print("  (未提取到图表元数据)")
+            print()
+
+        # 表格
+        elif label == "table":
+            print("=" * 60)
+            print(f"[表格] 层级: {level}")
+            if text:
+                print(f"  内容:\n{text[:500]}")
+            print()
+
+    # 导出完整 Markdown
+    md = doc.export_to_markdown()
+    print("\n" + "=" * 60)
+    print("完整 Markdown 导出:")
+    print("=" * 60)
+    print(md[:2000])
 
 
-def classify_file(
-    file_path: str | Path,
-    model: CLIPModel,
-    processor: CLIPProcessor,
-    labels: list[str] | None = None,
-    top_k: int = 3,
-) -> None:
-    """分类单个图片文件并打印结果。"""
-    image = Image.open(file_path).convert("RGB")
-    results = classify_image(image, model, processor, labels)
-
-    print(f"\n📷 {Path(file_path).name}")
-    print("-" * 50)
-    for label, score in results[:top_k]:
-        bar = "█" * int(score * 40)
-        print(f"  {score:.2%}  {bar}")
-        print(f"          {label}")
-    print("-" * 50)
-
-
-# ---------------------------------------------------------------------------
-# 命令行入口
-# ---------------------------------------------------------------------------
 if __name__ == "__main__":
-    import argparse
-
-    parser = argparse.ArgumentParser(description="零样本图片分类器 (CLIP)")
-    parser.add_argument("image", nargs="+", help="图片文件路径(支持多个)")
-    parser.add_argument("--top-k", type=int, default=3, help="输出前 K 个结果")
-    parser.add_argument(
-        "--labels",
-        nargs="*",
-        default=None,
-        help="自定义标签, 例如 --labels 'a chart' 'a photo' 'a diagram'",
-    )
-    args = parser.parse_args()
-
-    labels = args.labels if args.labels else CANDIDATE_LABELS
-    print(f"加载模型: {MODEL_ID} ...", end=" ", flush=True)
-    model, processor = load_model()
-    print("done")
-
-    for path in args.image:
-        classify_file(path, model, processor, labels, top_k=args.top_k)
+    target = sys.argv[1] if len(sys.argv) > 1 else "1.pdf"
+    parse_document(target)
