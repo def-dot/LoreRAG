@@ -1,16 +1,19 @@
 """RAG 存储与检索服务 — pgvector 稠密检索 + JSONB 稀疏检索"""
 
+import asyncio
 import json
+from datetime import datetime
 from typing import Any
 
 from sqlalchemy import delete, func, select, text
 from sqlmodel.ext.asyncio.session import AsyncSession
 
-from app.core.logging import get_logger
-from app.models.document import DocumentChunk
-from app.schemas.rag import DocumentListItem, SearchResult
-from app.services.embedding import encode_hybrid, encode_hybrid_batch
 from app.core.database import AsyncSessionLocal
+from app.core.logging import get_logger
+from app.models.document import Document, DocumentChunk, DocumentStatus
+from app.schemas.rag import DocumentDetail, DocumentListItem, SearchResult
+from app.services.document import process_document
+from app.services.embedding import encode_hybrid, encode_hybrid_batch
 
 logger = get_logger(__name__)
 
@@ -20,7 +23,77 @@ def _vector_to_str(vec: list[float]) -> str:
     return "[" + ",".join(str(v) for v in vec) + "]"
 
 
-async def store_chunks(chunks: list[dict[str, Any]]) -> int:
+async def create_document(
+    db: AsyncSession,
+    file_name: str,
+    file_path: str | None = None,
+    file_size: int | None = None,
+    file_ext: str | None = None,
+) -> Document:
+    now = datetime.now()
+    doc = Document(
+        file_name=file_name,
+        file_path=file_path,
+        file_size=file_size,
+        file_ext=file_ext,
+        status=DocumentStatus.PENDING,
+        created_at=now,
+        updated_at=now,
+    )
+    db.add(doc)
+    await db.commit()
+    await db.refresh(doc)
+    return doc
+
+
+async def update_document_status(
+    document_id: int,
+    status: str,
+    chunk_count: int = 0,
+    error_message: str | None = None,
+) -> Document:
+    """更新文档处理状态"""
+    async with AsyncSessionLocal() as db:
+        doc = await db.get(Document, document_id)
+        if doc is None:
+            logger.warning("Document %d not found, skip status update", document_id)
+            return
+
+        doc.status = status
+        doc.updated_at = datetime.now()
+
+        if status == DocumentStatus.COMPLETED:
+            doc.chunk_count = chunk_count
+        if error_message is not None:
+            doc.error_message = error_message
+
+        db.add(doc)
+        await db.commit()
+        await db.refresh(doc)
+        logger.info("Document %d status updated to %s", document_id, status)
+        return doc
+
+
+async def process_and_store(document_id: int) -> None:
+    """后台任务：更新状态 → 解析文档 → 切片 → 计算向量 → 入库 → 更新状态"""
+    try:
+        doc = await update_document_status(document_id, DocumentStatus.PROCESSING)
+
+        chunks = await asyncio.to_thread(process_document, doc.file_path)
+        if not chunks:
+            logger.warning("No chunks produced from %s (document_id=%d)", doc.file_path, document_id)
+            await update_document_status(document_id, DocumentStatus.COMPLETED, chunk_count=0)
+            return
+
+        count = await store_chunks(chunks, document_id=document_id)
+        await update_document_status(document_id, DocumentStatus.COMPLETED, chunk_count=count)
+        logger.info("Document processed successfully: %s (%d chunks)", doc.file_path, count)
+    except Exception as exc:
+        logger.exception("Failed to process document (document_id=%d)", document_id)
+        await update_document_status(document_id, DocumentStatus.FAILED, error_message=str(exc)[:2000])
+
+
+async def store_chunks(chunks: list[dict[str, Any]], document_id: int | None = None) -> int:
     """
     将切片批量写入数据库（含稠密向量 + 稀疏词权重计算）
 
@@ -37,15 +110,16 @@ async def store_chunks(chunks: list[dict[str, Any]]) -> int:
 
             stmt = text("""
                 INSERT INTO document_chunks
-                    (file_name, page_numbers, heading_context, raw_content, enriched_content,
+                    (document_id, file_name, page_numbers, heading_context, raw_content, enriched_content,
                      dense_vector, sparse_lexicon)
                 VALUES
-                    (:file_name, :page_numbers, :heading_context, :raw_content, :enriched_content,
+                    (:document_id, :file_name, :page_numbers, :heading_context, :raw_content, :enriched_content,
                      CAST(:dense_vector AS vector), CAST(:sparse_lexicon AS jsonb))
             """)
             await db.execute(
                 stmt,
                 {
+                    "document_id": document_id,
                     "file_name": meta["source_file"],
                     "page_numbers": meta["page_numbers"],
                     "heading_context": meta["heading_context"],
@@ -57,7 +131,7 @@ async def store_chunks(chunks: list[dict[str, Any]]) -> int:
             )
 
         await db.commit()
-    logger.info("Stored %d chunks for %s", len(chunks), chunks[0]["metadata"]["source_file"])
+    logger.info("Stored %d chunks for %s (document_id=%s)", len(chunks), chunks[0]["metadata"]["source_file"], document_id)
     return len(chunks)
 
 
@@ -143,33 +217,73 @@ async def search(query: str, db: AsyncSession, top_k: int = 5) -> list[SearchRes
 
 
 async def list_documents(db: AsyncSession) -> list[DocumentListItem]:
-    """列出所有已入库文档及其切片数量"""
-    stmt = (
-        select(
-            DocumentChunk.file_name,  # type: ignore[call-overload]
-            func.count(DocumentChunk.id).label("chunk_count"),  # type: ignore[arg-type]
+    """列出所有文档及其处理状态"""
+    stmt = select(Document).order_by(Document.created_at.desc())  # type: ignore[union-attr]
+    rows = (await db.execute(stmt)).scalars().all()
+
+    return [
+        DocumentListItem(
+            id=doc.id,  # type: ignore[arg-type]
+            file_name=doc.file_name,
+            file_path=doc.file_path,
+            file_size=doc.file_size,
+            file_ext=doc.file_ext,
+            status=doc.status,
+            chunk_count=doc.chunk_count,
+            created_at=doc.created_at,
+            updated_at=doc.updated_at,
         )
-        .group_by(DocumentChunk.file_name)
-        .order_by(DocumentChunk.file_name)
+        for doc in rows
+    ]
+
+
+async def get_document(db: AsyncSession, document_id: int) -> DocumentDetail | None:
+    """获取单个文档详情"""
+    doc = await db.get(Document, document_id)
+    if doc is None:
+        return None
+
+    return DocumentDetail(
+        id=doc.id,  # type: ignore[arg-type]
+        file_name=doc.file_name,
+        file_path=doc.file_path,
+        file_size=doc.file_size,
+        file_ext=doc.file_ext,
+        status=doc.status,
+        chunk_count=doc.chunk_count,
+        error_message=doc.error_message,
+        created_at=doc.created_at,
+        updated_at=doc.updated_at,
     )
-    rows = (await db.execute(stmt)).fetchall()
-
-    # 获取每个文档的页码范围
-    results: list[DocumentListItem] = []
-    for row in rows:
-        file_name = row[0]
-        page_stmt = select(func.unnest(DocumentChunk.page_numbers)).where(DocumentChunk.file_name == file_name)
-        pages = sorted(set((await db.execute(page_stmt)).scalars().all()))
-        results.append(DocumentListItem(file_name=file_name, chunk_count=row[1], page_numbers=pages))
-
-    return results
 
 
-async def delete_document(file_name: str, db: AsyncSession) -> int:
-    """删除文档的所有切片，返回删除数量"""
-    stmt = delete(DocumentChunk).where(DocumentChunk.file_name == file_name)  # type: ignore[arg-type]
-    result = await db.execute(stmt)
+async def delete_document_by_id(db: AsyncSession, document_id: int) -> tuple[int, str]:
+    """
+    删除文档及其关联切片，同时清理磁盘源文件
+
+    返回 (删除切片数量, 文件名)
+    """
+    import os
+
+    doc = await db.get(Document, document_id)
+    if doc is None:
+        return 0, ""
+
+    file_name = doc.file_name
+    file_path = doc.file_path
+
+    # 删除关联切片
+    chunk_stmt = delete(DocumentChunk).where(DocumentChunk.document_id == document_id)  # type: ignore[arg-type]
+    chunk_result = await db.execute(chunk_stmt)
+    deleted_chunks = chunk_result.rowcount  # type: ignore[attr-defined]
+
+    # 删除文档记录
+    await db.delete(doc)
     await db.commit()
-    deleted = result.rowcount  # type: ignore[attr-defined]
-    logger.info(f"Deleted {deleted} chunks for {file_name}")
-    return deleted  # type: ignore[no-any-return]
+
+    # 清理磁盘源文件
+    if file_path and os.path.exists(file_path):
+        os.remove(file_path)
+
+    logger.info("Deleted document %d (%s), %d chunks removed", document_id, file_name, deleted_chunks)
+    return deleted_chunks, file_name

@@ -1,44 +1,34 @@
 """RAG 知识库 API 路由"""
 
-import asyncio
 import os
 from typing import Any
 
+from docling.datamodel.base_models import FormatToExtensions
 from fastapi import APIRouter, BackgroundTasks, HTTPException, UploadFile, status
 
 from app.core.config import settings
+
+SUPPORTED_SUFFIXES = {
+    f".{ext}"
+    for exts in FormatToExtensions.values()
+    for ext in exts
+}
+
 from app.core.deps import SessionDep
 from app.core.logging import get_logger
+from app.models.document import DocumentStatus
 from app.schemas.rag import (
     DeleteResponse,
+    DocumentDetail,
     DocumentListResponse,
     SearchRequest,
     SearchResponse,
     UploadResponse,
 )
 from app.services import rag as rag_service
-from app.services.document import process_document
 
 logger = get_logger(__name__)
 router = APIRouter(prefix="/rag", tags=["RAG 知识库"])
-
-
-async def _process_and_store(file_path: str) -> None:
-    """后台任务：解析文档 → 切片 → 计算向量 → 入库"""
-    try:
-        chunks = await asyncio.to_thread(process_document, file_path)
-        if not chunks:
-            logger.warning("No chunks produced from %s", file_path)
-            return
-
-        await rag_service.store_chunks(chunks)
-        logger.info("Document processed successfully: %s (%d chunks)", file_path, len(chunks))
-    except Exception:
-        logger.exception("Failed to process document: %s", file_path)
-    finally:
-        # 清理上传文件
-        if os.path.exists(file_path):
-            os.remove(file_path)
 
 
 @router.post("/upload", response_model=UploadResponse, status_code=status.HTTP_202_ACCEPTED)
@@ -48,31 +38,38 @@ async def upload_document(
     db: SessionDep,
 ) -> Any:
     """
-    上传文档（PDF/DOCX/PPTX），后台异步处理
+    上传文档，后台异步处理
 
+    支持所有 Docling 可解析的格式（PDF、DOCX、PPTX、HTML、Markdown、图片、CSV、XLSX 等）。
     处理流程：上传 → Docling 解析 → 多模态回填 → 切片 → BGE-M3 向量化 → 入库
     """
-    suffixes = {".pdf", ".docx", ".pptx"}
     file_ext = os.path.splitext(file.filename or "")[1].lower()
-    if file_ext not in suffixes:
+    if file_ext not in SUPPORTED_SUFFIXES:
         raise HTTPException(
             status_code=400,
-            detail=f"不支持的文件格式: {file_ext}，仅支持 {', '.join(suffixes)}",
+            detail=f"不支持的文件格式: {file_ext}，仅支持 {', '.join(sorted(SUPPORTED_SUFFIXES))}",
         )
 
-    # 保存上传文件
     upload_dir = settings.UPLOAD_DIR
     os.makedirs(upload_dir, exist_ok=True)
     file_path = os.path.join(upload_dir, file.filename)  # type: ignore[arg-type]
 
     content = await file.read()
+
+    doc = await rag_service.create_document(
+        db,
+        file_name=file.filename,  # type: ignore[arg-type]
+        file_path=file_path,
+        file_size=len(content),
+        file_ext=file_ext,
+    )
+
     with open(file_path, "wb") as f:
         f.write(content)
 
-    # 后台异步处理
-    background_tasks.add_task(_process_and_store, file_path)
+    background_tasks.add_task(rag_service.process_and_store, doc.id)
 
-    return UploadResponse(file_name=file.filename, status="processing")  # type: ignore[arg-type]
+    return UploadResponse(document_id=doc.id, file_name=file.filename, status=DocumentStatus.PROCESSING)  # type: ignore[arg-type]
 
 
 @router.post("/search", response_model=SearchResponse)
@@ -91,18 +88,30 @@ async def search_knowledge_base(
 
 @router.get("/documents", response_model=DocumentListResponse)
 async def list_documents(db: SessionDep) -> Any:
-    """列出所有已入库的文档"""
+    """列出所有文档及其处理状态"""
     docs = await rag_service.list_documents(db)
     return DocumentListResponse(items=docs, total=len(docs))
 
 
-@router.delete("/documents/{file_name}", response_model=DeleteResponse)
-async def delete_document(
-    file_name: str,
+@router.get("/documents/{document_id}", response_model=DocumentDetail)
+async def get_document(
+    document_id: int,
     db: SessionDep,
 ) -> Any:
-    """删除指定文档的所有切片"""
-    deleted = await rag_service.delete_document(file_name, db)
-    if deleted == 0:
-        raise HTTPException(status_code=404, detail=f"文档不存在: {file_name}")
-    return DeleteResponse(deleted_chunks=deleted, file_name=file_name)
+    """获取单个文档详情"""
+    doc = await rag_service.get_document(db, document_id)
+    if doc is None:
+        raise HTTPException(status_code=404, detail=f"文档不存在: {document_id}")
+    return doc
+
+
+@router.delete("/documents/{document_id}", response_model=DeleteResponse)
+async def delete_document(
+    document_id: int,
+    db: SessionDep,
+) -> Any:
+    """删除指定文档及其所有切片"""
+    deleted_chunks, file_name = await rag_service.delete_document_by_id(db, document_id)
+    if deleted_chunks == 0 and not file_name:
+        raise HTTPException(status_code=404, detail=f"文档不存在: {document_id}")
+    return DeleteResponse(deleted_chunks=deleted_chunks, file_name=file_name)

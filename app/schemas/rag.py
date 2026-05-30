@@ -1,5 +1,7 @@
 """RAG 请求/响应 Schema"""
 
+from datetime import datetime
+
 from pydantic import BaseModel, Field
 
 
@@ -31,17 +33,23 @@ class SearchResponse(BaseModel):
 class UploadResponse(BaseModel):
     """文档上传响应"""
 
+    document_id: int = Field(description="文档 ID")
     file_name: str = Field(description="文件名")
-    chunk_count: int = Field(default=0, description="切片数量")
     status: str = Field(default="processing", description="处理状态")
 
 
 class DocumentListItem(BaseModel):
     """文档列表项"""
 
+    id: int = Field(description="文档 ID")
     file_name: str = Field(description="文件名")
-    chunk_count: int = Field(description="切片数量")
-    page_numbers: list[int] = Field(default=[], description="涉及页码")
+    file_path: str | None = Field(default=None, description="文件存储路径")
+    file_size: int | None = Field(default=None, description="文件大小（字节）")
+    file_ext: str | None = Field(default=None, description="文件后缀")
+    status: str = Field(description="处理状态")
+    chunk_count: int = Field(default=0, description="切片数量")
+    created_at: datetime | None = Field(default=None, description="上传时间")
+    updated_at: datetime | None = Field(default=None, description="更新时间")
 
 
 class DocumentListResponse(BaseModel):
@@ -49,6 +57,21 @@ class DocumentListResponse(BaseModel):
 
     items: list[DocumentListItem] = Field(description="文档列表")
     total: int = Field(description="文档总数")
+
+
+class DocumentDetail(BaseModel):
+    """文档详情"""
+
+    id: int = Field(description="文档 ID")
+    file_name: str = Field(description="文件名")
+    file_path: str | None = Field(default=None, description="文件存储路径")
+    file_size: int | None = Field(default=None, description="文件大小（字节）")
+    file_ext: str | None = Field(default=None, description="文件后缀")
+    status: str = Field(description="处理状态")
+    chunk_count: int = Field(default=0, description="切片数量")
+    error_message: str | None = Field(default=None, description="错误信息")
+    created_at: datetime | None = Field(default=None, description="上传时间")
+    updated_at: datetime | None = Field(default=None, description="更新时间")
 
 
 class DeleteResponse(BaseModel):
