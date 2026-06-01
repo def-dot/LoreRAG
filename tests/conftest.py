@@ -29,8 +29,11 @@ app.dependency_overrides[get_db] = override_get_db
 
 
 @pytest_asyncio.fixture(autouse=True)
-async def setup_db():
-    """每个测试前建表，测试后清表"""
+async def setup_db(request):
+    """每个测试前建表，测试后清表（跳过 docling 等不需要数据库的目录）"""
+    if "docling" in request.fspath.strpath:
+        yield
+        return
     async with test_engine.begin() as conn:
         await conn.run_sync(SQLModel.metadata.create_all)
     yield

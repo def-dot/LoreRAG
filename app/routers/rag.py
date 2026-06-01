@@ -3,16 +3,9 @@
 import os
 from typing import Any
 
-from docling.datamodel.base_models import FormatToExtensions
 from fastapi import APIRouter, BackgroundTasks, HTTPException, UploadFile, status
 
 from app.core.config import settings
-
-SUPPORTED_SUFFIXES = {
-    f".{ext}"
-    for exts in FormatToExtensions.values()
-    for ext in exts
-}
 
 from app.core.deps import SessionDep
 from app.core.logging import get_logger
@@ -38,16 +31,15 @@ async def upload_document(
     db: SessionDep,
 ) -> Any:
     """
-    上传文档，后台异步处理
+    上传 PDF 文档，后台异步处理
 
-    支持所有 Docling 可解析的格式（PDF、DOCX、PPTX、HTML、Markdown、图片、CSV、XLSX 等）。
-    处理流程：上传 → Docling 解析 → 多模态回填 → 切片 → BGE-M3 向量化 → 入库
+    处理流程：上传 → Docling 全能力解析（OCR + 表格 + 公式 + 图片描述 + 图表提取） → 切片 → BGE-M3 向量化 → 入库
     """
     file_ext = os.path.splitext(file.filename or "")[1].lower()
-    if file_ext not in SUPPORTED_SUFFIXES:
+    if file_ext != ".pdf":
         raise HTTPException(
             status_code=400,
-            detail=f"不支持的文件格式: {file_ext}，仅支持 {', '.join(sorted(SUPPORTED_SUFFIXES))}",
+            detail="仅支持 PDF 文件格式",
         )
 
     upload_dir = settings.UPLOAD_DIR
