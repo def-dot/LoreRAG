@@ -4,16 +4,20 @@
 """
 
 from pathlib import Path
+from docling.datamodel.document import ConversionResult, InputDocument
+from docling.models.stages.page_preprocessing.page_preprocessing_model import (
+    PagePreprocessingModel,
+    PagePreprocessingOptions,
+)
+from docling.backend.docling_parse_backend import DoclingParseDocumentBackend
+from docling.datamodel.base_models import InputFormat, Page
 
 PDF_PATH = Path(__file__).resolve().parent / "test.pdf"
 
 
-def _prepare():
-    """准备 ConversionResult + 页面列表（手动加载 backend）"""
-    from docling.backend.docling_parse_backend import DoclingParseDocumentBackend
-    from docling.datamodel.base_models import InputFormat, Page
-    from docling.datamodel.document import ConversionResult, InputDocument
-
+# ── Stage 1: Preprocess ─────────────────────────────────────────────────
+def test_stage_preprocess():
+    """preprocess: 加载页面图像 + 提取文本单元格"""
     in_doc = InputDocument(
         path_or_stream=PDF_PATH,
         format=InputFormat.PDF,
@@ -24,34 +28,16 @@ def _prepare():
     pages = []
     for i in range(in_doc.page_count):
         page = Page(page_no=i + 1)
-        page_backend = in_doc._backend.load_page(i)
-        page._backend = page_backend
-        if page_backend.is_valid():
-            page.size = page_backend.get_size()
+        page._backend = in_doc._backend.load_page(i)
+        if page._backend.is_valid():
+            page.size = page._backend.get_size()
         pages.append(page)
 
-    return conv_res, pages
-
-
-# ── Stage 1: Preprocess ─────────────────────────────────────────────────
-def test_stage_preprocess():
-    """preprocess: 加载页面图像 + 提取文本单元格"""
-    if not PDF_PATH.exists():
-        return print("跳过: PDF 不存在"), []
-
-    from docling.models.stages.page_preprocessing.page_preprocessing_model import (
-        PagePreprocessingModel,
-        PagePreprocessingOptions,
-    )
-
-    conv_res, pages = _prepare()
     model = PagePreprocessingModel(options=PagePreprocessingOptions(images_scale=2.0))
 
     print("=" * 60)
     print("Stage 1: Preprocess")
     print("=" * 60)
-    for page in pages:
-        print(f"\n--- 输入: page_no={page.page_no}, size={page.size}, cells数={len(page.cells)}")
 
     processed = list(model(conv_res, pages))
 
@@ -72,9 +58,6 @@ def test_stage_preprocess():
 # ── Stage 2: OCR ────────────────────────────────────────────────────────
 def test_stage_ocr():
     """ocr: 对位图区域做 OCR，补充文本单元格"""
-    if not PDF_PATH.exists():
-        return print("跳过: PDF 不存在"), []
-
     from docling.datamodel.accelerator_options import AcceleratorOptions
     from docling.datamodel.pipeline_options import RapidOcrOptions
     from docling.models.factories import get_ocr_factory
@@ -111,9 +94,6 @@ def test_stage_ocr():
 # ── Stage 3: Layout ─────────────────────────────────────────────────────
 def test_stage_layout():
     """layout: 布局分析，检测标题、段落、图片、表格等区域"""
-    if not PDF_PATH.exists():
-        return print("跳过: PDF 不存在"), []
-
     from docling.datamodel.accelerator_options import AcceleratorOptions
     from docling.datamodel.pipeline_options import LayoutOptions
     from docling.models.factories import get_layout_factory
@@ -151,9 +131,6 @@ def test_stage_layout():
 # ── Stage 4: Table ──────────────────────────────────────────────────────
 def test_stage_table():
     """table: 识别表格结构（行、列、合并单元格）"""
-    if not PDF_PATH.exists():
-        return print("跳过: PDF 不存在"), []
-
     from docling.datamodel.accelerator_options import AcceleratorOptions
     from docling.datamodel.pipeline_options import TableStructureOptions
     from docling.models.factories import get_table_structure_factory
@@ -185,9 +162,9 @@ def test_stage_table():
         if ts is None:
             print("  表格结构: 无")
             continue
-        tables = ts.table_predictions if hasattr(ts, "table_predictions") else []
+        tables = ts.table_map
         print(f"  识别到 {len(tables)} 个表格结构")
-        for i, tbl in enumerate(tables[:3]):
+        for i, tbl in tables.items():
             if hasattr(tbl, "num_rows") and hasattr(tbl, "num_cols"):
                 print(f"    [{i}] {tbl.num_rows}行 x {tbl.num_cols}列")
             else:
@@ -199,9 +176,6 @@ def test_stage_table():
 # ── Stage 5: Assemble ──────────────────────────────────────────────────
 def test_stage_assemble():
     """assemble: 将预测结果组装成结构化文档元素"""
-    if not PDF_PATH.exists():
-        return print("跳过: PDF 不存在"), []
-
     from docling.models.stages.page_assemble.page_assemble_model import (
         PageAssembleModel,
         PageAssembleOptions,
@@ -234,8 +208,8 @@ def test_stage_assemble():
 
 
 if __name__ == "__main__":
-    test_stage_preprocess()
-    test_stage_ocr()
-    test_stage_layout()
-    test_stage_table()
+    # test_stage_preprocess()
+    # test_stage_ocr()
+    # test_stage_layout()
+    # test_stage_table()
     test_stage_assemble()
