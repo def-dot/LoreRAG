@@ -1,6 +1,6 @@
 """
 手动逐步执行 Docling StandardPdfPipeline 的各个阶段，
-流水线: preprocess → ocr → layout → table → assemble → reading_order → picture_classifier → picture_description
+流水线: preprocess → ocr → layout → table → assemble → reading_order → picture_classifier → picture_description → chart_extraction → code_formula
 """
 
 from pathlib import Path
@@ -475,6 +475,140 @@ def test_stage_picture_description():
     return conv_res
 
 
+# ── Stage 9: Chart Extraction (图表解析) ────────────────────────────────
+def test_stage_chart_extraction():
+    """
+    chart_extraction: 使用 Granite Vision VLM 从图表中提取 CSV 数据、Python 代码、摘要
+    使用模型：ibm-granite/granite-vision-3.3-2b
+    """
+    from docling.datamodel.accelerator_options import AcceleratorOptions
+    from docling.models.stages.chart_extraction.granite_vision import (
+        ChartExtractionModelGraniteVisionV4,
+        ChartExtractionModelOptions,
+    )
+    from docling.datamodel.base_models import ItemAndImageEnrichmentElement
+    from docling.datamodel.document import PictureItem
+
+    # 先完成 Stage 1-7（需要分类结果来筛选图表）
+    conv_res = test_stage_picture_classifier()
+
+    # 只处理分类为图表类型的 PictureItem
+    chart_labels = {
+        "pie_chart", "bar_chart", "stacked_bar_chart", "line_chart",
+        "scatter_chart", "heatmap", "flow_chart", "stratigraphic_chart",
+    }
+    element_batch = []
+    for element, _level in conv_res.document.iterate_items():
+        if not isinstance(element, PictureItem) or element.image is None:
+            continue
+        # 检查分类结果
+        if element.meta and element.meta.classification and element.meta.classification.predictions:
+            top_class = element.meta.classification.predictions[0].class_name
+            if top_class in chart_labels:
+                element_batch.append(
+                    ItemAndImageEnrichmentElement(
+                        item=element,
+                        image=element.image.pil_image,
+                    )
+                )
+
+    print("\n" + "=" * 60)
+    print("Stage 9: Chart Extraction (图表解析)")
+    print("=" * 60)
+    print(f"  待解析的图表元素: {len(element_batch)} 个")
+
+    if not element_batch:
+        print("  （未检测到图表元素，跳过解析）")
+        return conv_res
+
+    model = ChartExtractionModelGraniteVisionV4(
+        enabled=True,
+        artifacts_path=None,
+        options=ChartExtractionModelOptions(
+            chart2csv=True,
+            chart2code=True,
+            chart2summary=True,
+        ),
+        accelerator_options=AcceleratorOptions(),
+    )
+
+    results = list(model(conv_res.document, element_batch))
+
+    for i, item in enumerate(results):
+        print(f"\n--- 图表 [{i}]  label={item.label}")
+        for ann in item.annotations:
+            kind = getattr(ann, "kind", "?")
+            if hasattr(ann, "text"):
+                print(f"  [{kind}] {ann.text[:300]}")
+            elif hasattr(ann, "data"):
+                print(f"  [{kind}] {str(ann.data)[:300]}")
+            else:
+                print(f"  [{kind}] {str(ann)[:300]}")
+
+    return conv_res
+
+
+# ── Stage 10: Code & Formula (公式代码解析) ──────────────────────────────
+def test_stage_code_formula():
+    """
+    code_formula: 使用 CodeFormulaV2 模型识别代码块和数学公式
+    公式解析为 LaTeX，代码解析为伪代码
+    使用模型：docling-project/code-formula-v2
+    """
+    from docling.datamodel.accelerator_options import AcceleratorOptions
+    from docling.models.stages.code_formula.code_formula_model import (
+        CodeFormulaModel,
+        CodeFormulaModelOptions,
+    )
+    from docling.datamodel.base_models import ItemAndImageEnrichmentElement
+    from docling.datamodel.document import PictureItem
+
+    # 依赖 Stage 6（需要 DoclingDocument + 元素图片）
+    conv_res = test_stage_reading_order()
+
+    # 构造 enrichment batch（所有有图片的元素）
+    element_batch = []
+    for element, _level in conv_res.document.iterate_items():
+        if isinstance(element, PictureItem) and element.image is not None:
+            element_batch.append(
+                ItemAndImageEnrichmentElement(
+                    item=element,
+                    image=element.image.pil_image,
+                )
+            )
+
+    print("\n" + "=" * 60)
+    print("Stage 10: Code & Formula (公式代码解析)")
+    print("=" * 60)
+    print(f"  待处理的图片元素: {len(element_batch)} 个")
+
+    if not element_batch:
+        print("  （未检测到图片元素，跳过）")
+        return conv_res
+
+    model = CodeFormulaModel(
+        enabled=True,
+        artifacts_path=None,
+        options=CodeFormulaModelOptions(
+            do_code_enrichment=True,
+            do_formula_enrichment=True,
+        ),
+        accelerator_options=AcceleratorOptions(),
+    )
+
+    results = list(model(conv_res.document, element_batch))
+
+    for i, item in enumerate(results):
+        print(f"\n--- 元素 [{i}]  label={item.label}")
+        text = getattr(item, "text", "")
+        orig = getattr(item, "orig", "")
+        if orig and orig != text:
+            print(f"  原文: {orig[:200]}")
+        print(f"  文本: {text[:200]}")
+
+    return conv_res
+
+
 if __name__ == "__main__":
     # test_stage_preprocess()
     # test_stage_ocr()
@@ -483,4 +617,6 @@ if __name__ == "__main__":
     # test_stage_assemble()
     # test_stage_reading_order()
     # test_stage_picture_classifier()
-    test_stage_picture_description()
+    # test_stage_picture_description()
+    test_stage_chart_extraction()
+    # test_stage_code_formula()
