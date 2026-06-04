@@ -59,10 +59,10 @@ def run_all():
 
     # # ── Document-level stages ──
     conv_res = stage6_reading_order.run(conv_res, pages)
-    # conv_res = stage7_picture_classifier.run(conv_res)
-    # conv_res = stage8_picture_description.run(conv_res)
-    # conv_res = stage9_chart_extraction.run(conv_res)
-    # conv_res = stage10_code_formula.run(conv_res)
+    conv_res = stage7_picture_classifier.run(conv_res)
+    conv_res = stage8_picture_description.run(conv_res)
+    conv_res = stage9_chart_extraction.run(conv_res)
+    conv_res = stage10_code_formula.run(conv_res)
 
     return conv_res
 
