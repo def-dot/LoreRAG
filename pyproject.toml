@@ -23,7 +23,8 @@ dependencies = [
     "docling>=2.15.0",
     "rapidocr-onnxruntime>=1.4.0",
     "sentence-transformers>=3.0.0",
-    "flagembedding==1.4.0"
+    "flagembedding==1.4.0",
+    "transformers>=4.42.0,<5.9.0,!=5.0.*,!=5.1.*,!=5.2.*,!=5.3.*"
 ]
 
 [project.optional-dependencies]

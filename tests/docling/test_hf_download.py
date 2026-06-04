@@ -1,6 +1,5 @@
 import os
 
-# 1. 核心：将下载源切换为国内高速镜像站（防止网络报错连接失败）
 os.environ["HF_ENDPOINT"] = "https://hf-mirror.com"
 
 from huggingface_hub import snapshot_download
@@ -13,7 +12,7 @@ def trigger_download():
     # 2. 触发完整下载
     local_dir = snapshot_download(
         repo_id=repo_id,
-        resume_download=True,  # 支持断点续传，中途断开重新运行即可
+        resume_download=True,
         revision="dd48e97503de471803850df70843cf9eb5da8712"
     )
     
