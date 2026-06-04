@@ -4,6 +4,8 @@
 """
 
 from pathlib import Path
+import time
+import functools
 from docling.datamodel.document import ConversionResult, InputDocument
 from docling.models.stages.page_preprocessing.page_preprocessing_model import (
     PagePreprocessingModel,
@@ -17,7 +19,23 @@ from app.routers.items import list_items
 PDF_PATH = Path(__file__).resolve().parent / "test.pdf"
 
 
+def _timed(stage_name: str):
+    """装饰器：为 stage 函数计时并打印耗时"""
+    def decorator(func):
+        @functools.wraps(func)
+        def wrapper(*args, **kwargs):
+            print(f"\n⏱  {stage_name} 开始...")
+            t0 = time.perf_counter()
+            result = func(*args, **kwargs)
+            elapsed = time.perf_counter() - t0
+            print(f"⏱  {stage_name} 完成，耗时: {elapsed:.2f}s")
+            return result
+        return wrapper
+    return decorator
+
+
 # ── Stage 1: Preprocess ─────────────────────────────────────────────────
+@_timed("Stage 1: Preprocess")
 def test_stage_preprocess():
     """
     preprocess: 加载页面图像 + 提取文本单元格,
@@ -61,6 +79,7 @@ def test_stage_preprocess():
 
 
 # ── Stage 2: OCR ────────────────────────────────────────────────────────
+@_timed("Stage 2: OCR")
 def test_stage_ocr():
     """
     ocr: 对位图区域做 OCR，补充文本单元格，
@@ -101,6 +120,7 @@ def test_stage_ocr():
 
 
 # ── Stage 3: Layout ─────────────────────────────────────────────────────
+@_timed("Stage 3: Layout")
 def test_stage_layout():
     """
     layout: 布局分析，检测标题、段落、图片、表格等区域
@@ -142,6 +162,7 @@ def test_stage_layout():
 
 
 # ── Stage 4: Table ──────────────────────────────────────────────────────
+@_timed("Stage 4: Table")
 def test_stage_table():
     """
     table: 识别表格结构（行、列、合并单元格）
@@ -191,6 +212,7 @@ def test_stage_table():
 
 
 # ── Stage 5: Assemble ──────────────────────────────────────────────────
+@_timed("Stage 5: Assemble")
 def test_stage_assemble():
     """
     assemble: 将预测结果组装成结构化文档元素
@@ -276,6 +298,7 @@ def _generate_element_images(conv_res: ConversionResult, scale: float = 2.0):
 
 
 # ── Stage 6: Reading Order ───────────────────────────────────────────────
+@_timed("Stage 6: Reading Order")
 def test_stage_reading_order():
     """
     reading_order: 确定文档阅读顺序，左->右、上->下，caption/footnote等特殊元素的归属关系
@@ -351,6 +374,7 @@ def test_stage_reading_order():
 
 
 # ── Stage 7: Picture Classification (图表分类) ────────────────────────────
+@_timed("Stage 7: Picture Classifier")
 def test_stage_picture_classifier():
     """
     picture_classifier: 对文档中的图片/图表进行分类（饼图、柱状图、折线图等）
@@ -415,6 +439,7 @@ def test_stage_picture_classifier():
 
 
 # ── Stage 8: Picture Description (图片描述) ──────────────────────────────
+@_timed("Stage 8: Picture Description")
 def test_stage_picture_description():
     """
     picture_description: 使用 VLM (SmolVLM-256M) 对图片/图表生成文字描述
@@ -476,10 +501,11 @@ def test_stage_picture_description():
 
 
 # ── Stage 9: Chart Extraction (图表解析) ────────────────────────────────
+@_timed("Stage 9: Chart Extraction")
 def test_stage_chart_extraction():
     """
     chart_extraction: 使用 Granite Vision VLM 从图表中提取 CSV 数据、Python 代码、摘要
-    使用模型：ibm-granite/granite-vision-3.3-2b
+    使用模型：ibm-granite/granite-vision-4.1-4b
     """
     from docling.datamodel.accelerator_options import AcceleratorOptions
     from docling.models.stages.chart_extraction.granite_vision import (
@@ -549,6 +575,7 @@ def test_stage_chart_extraction():
 
 
 # ── Stage 10: Code & Formula (公式代码解析) ──────────────────────────────
+@_timed("Stage 10: Code & Formula")
 def test_stage_code_formula():
     """
     code_formula: 使用 CodeFormulaV2 模型识别代码块和数学公式
