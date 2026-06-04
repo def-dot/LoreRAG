@@ -17,7 +17,8 @@ from docling.document_converter import DocumentConverter, PdfFormatOption
 from app.core.config import settings
 
 
-def _build_pipeline_options() -> PdfPipelineOptions:
+def _init_converter() -> DocumentConverter:
+    """初始化 Docling 转换引擎 — 仅 PDF"""
     """构建 PDF 全能力管线选项（使用 Docling 内置 SmolVLM 默认图片描述）"""
     opts = PdfPipelineOptions()
 
@@ -27,26 +28,22 @@ def _build_pipeline_options() -> PdfPipelineOptions:
     opts.do_ocr = True
     opts.ocr_options = RapidOcrOptions()
 
-    # 表格：使用TableFormerV2模型，识别表格结构，如3*4，合并单元格，并将文本回填到单元格
     opts.do_table_structure = True
 
-    # 公式 & 代码：使用CodeFormulaV2模型，将公式解析成LaTeX语法，代码解析成伪代码
     opts.do_formula_enrichment = True
     opts.do_code_enrichment = True
 
-    # ---- 图片分类 ----
     opts.do_picture_classification = True
 
-    # ---- 图片描述（使用 Docling 内置 SmolVLM-256M） ----
     opts.do_picture_description = True
 
     # ---- 图表提取 ----
-    opts.do_chart_extraction = True
-    opts.chart_extraction_options = ChartExtractionModelOptions(
-        chart2csv=True,
-        chart2code=True,
-        chart2summary=True,
-    )
+    # opts.do_chart_extraction = True
+    # opts.chart_extraction_options = ChartExtractionModelOptions(
+    #     chart2csv=True,
+    #     chart2code=True,
+    #     chart2summary=True,
+    # )
 
     # ---- 图片生成 ----
     opts.generate_page_images = True
@@ -54,16 +51,9 @@ def _build_pipeline_options() -> PdfPipelineOptions:
     opts.generate_table_images = True
     opts.images_scale = 2.0
 
-    return opts
-
-
-def _init_converter() -> DocumentConverter:
-    """初始化 Docling 转换引擎 — 仅 PDF"""
-    pipeline_options = _build_pipeline_options()
-
     return DocumentConverter(
         format_options={
-            InputFormat.PDF: PdfFormatOption(pipeline_options=pipeline_options),
+            InputFormat.PDF: PdfFormatOption(pipeline_options=opts),
         }
     )
 

@@ -13,7 +13,7 @@ from docling.datamodel.base_models import InputFormat, Page
 
 from .utils import timed
 
-PDF_PATH = Path(__file__).resolve().parent / "test.pdf"
+PDF_PATH = Path(__file__).resolve().parent.parent / "test.pdf"
 
 
 @timed("Stage 1: Preprocess")
