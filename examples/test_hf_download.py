@@ -6,7 +6,7 @@ os.environ["HF_ENDPOINT"] = "https://hf-mirror.com"
 from huggingface_hub import snapshot_download
 
 def trigger_download():
-    repo_id = "docling-project/CodeFormulaV2"
+    repo_id = "HuggingFaceTB/SmolVLM-256M-Instruct"
     print(f"正在启动下载模型: {repo_id} ...")
     print("下载完成后会保存在系统的默认缓存目录中。")
     
