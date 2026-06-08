@@ -1,27 +1,19 @@
-"""文档处理服务 — Docling PDF 全能力管线"""
+"""文档处理服务 — Docling PDF 全能力管线（重量级库延迟导入，单例复用）"""
+
+from __future__ import annotations
 
 import os
+from functools import lru_cache
 from typing import Any
-import re
-
-from transformers import AutoTokenizer
-from docling.chunking import HybridChunker  # type: ignore[attr-defined]
-from docling.datamodel.base_models import InputFormat
-from docling.datamodel.pipeline_options import (
-    ChartExtractionModelOptions,
-    PdfPipelineOptions,
-    RapidOcrOptions,
-    TableStructureOptions,
-    TableFormerMode,
-)
-from docling.document_converter import DocumentConverter, PdfFormatOption
-from docling_core.transforms.chunker.tokenizer.huggingface import HuggingFaceTokenizer
-from app.core.config import settings
 
 
-def _init_converter() -> DocumentConverter:
-    """初始化 Docling 转换引擎 — 仅 PDF"""
-    """构建 PDF 全能力管线选项（使用 Docling 内置 SmolVLM 默认图片描述）"""
+@lru_cache(maxsize=1)
+def _get_converter():
+    """单例 DocumentConverter — 首次调用时加载 docling，之后复用"""
+    from docling.datamodel.base_models import InputFormat
+    from docling.datamodel.pipeline_options import PdfPipelineOptions, RapidOcrOptions
+    from docling.document_converter import DocumentConverter, PdfFormatOption
+
     opts = PdfPipelineOptions()
 
     opts.document_timeout = 300.0
@@ -36,7 +28,6 @@ def _init_converter() -> DocumentConverter:
     opts.do_code_enrichment = True
 
     # opts.do_picture_classification = True
-
     # opts.do_picture_description = True
 
     # ---- 图表提取 ----
@@ -60,6 +51,18 @@ def _init_converter() -> DocumentConverter:
     )
 
 
+@lru_cache(maxsize=1)
+def _get_chunker():
+    """单例 HybridChunker — 首次调用时加载 transformers + docling 切片模块"""
+    from transformers import AutoTokenizer
+    from docling.chunking import HybridChunker  # type: ignore[attr-defined]
+    from docling_core.transforms.chunker.tokenizer.huggingface import HuggingFaceTokenizer
+
+    bge_tok = AutoTokenizer.from_pretrained("./hub/bge-m3")
+    tokenizer = HuggingFaceTokenizer(tokenizer=bge_tok, max_tokens=512)
+    return HybridChunker(tokenizer=tokenizer)
+
+
 def process_document(file_path: str) -> list[dict[str, Any]]:
     """
     解析 PDF → 智能切片
@@ -68,14 +71,15 @@ def process_document(file_path: str) -> list[dict[str, Any]]:
     Docling PDF 全能力管线（OCR + 表格 + 公式 + 代码 + 图片分类 + 图片描述 + 图表提取） → HybridChunker 切片
 
     返回格式: [{"enriched_text": ..., "raw_text": ..., "metadata": {...}}, ...]
+
+    converter 和 chunker 通过 lru_cache 单例复用，首次调用时加载重量级库，
+    后续调用零开销。
     """
-    converter = _init_converter()
+    converter = _get_converter()
     result = converter.convert(file_path)
     doc = result.document
 
-    bge_tok = AutoTokenizer.from_pretrained("./hub/bge-m3")
-    tokenizer = HuggingFaceTokenizer(tokenizer=bge_tok, max_tokens=512)
-    chunker = HybridChunker(tokenizer=tokenizer)
+    chunker = _get_chunker()
     doc_chunks = list(chunker.chunk(doc))
 
     formatted: list[dict[str, Any]] = []
