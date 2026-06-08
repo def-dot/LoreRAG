@@ -2,7 +2,9 @@
 
 import os
 from typing import Any
+import re
 
+from transformers import AutoTokenizer
 from docling.chunking import HybridChunker  # type: ignore[attr-defined]
 from docling.datamodel.base_models import InputFormat
 from docling.datamodel.pipeline_options import (
@@ -13,7 +15,7 @@ from docling.datamodel.pipeline_options import (
     TableFormerMode,
 )
 from docling.document_converter import DocumentConverter, PdfFormatOption
-
+from docling_core.transforms.chunker.tokenizer.huggingface import HuggingFaceTokenizer
 from app.core.config import settings
 
 
@@ -33,9 +35,9 @@ def _init_converter() -> DocumentConverter:
     opts.do_formula_enrichment = True
     opts.do_code_enrichment = True
 
-    opts.do_picture_classification = True
+    # opts.do_picture_classification = True
 
-    opts.do_picture_description = True
+    # opts.do_picture_description = True
 
     # ---- 图表提取 ----
     # opts.do_chart_extraction = True
@@ -71,12 +73,15 @@ def process_document(file_path: str) -> list[dict[str, Any]]:
     result = converter.convert(file_path)
     doc = result.document
 
-    chunker = HybridChunker(max_tokens=settings.CHUNK_SIZE, overlap_tokens=settings.CHUNK_OVERLAP)  # type: ignore[call-arg]
+    bge_tok = AutoTokenizer.from_pretrained("./hub/bge-m3")
+    tokenizer = HuggingFaceTokenizer(tokenizer=bge_tok, max_tokens=512)
+    chunker = HybridChunker(tokenizer=tokenizer)
     doc_chunks = list(chunker.chunk(doc))
 
     formatted: list[dict[str, Any]] = []
     for i, chunk in enumerate(doc_chunks):
         chunk_text = chunk.text
+        chunk_text = chunk_text.replace("\x00 ", "-")
 
         headings = getattr(chunk.meta, "headings", []) or []
         heading_ctx = " > ".join(h if isinstance(h, str) else h.text for h in headings) if headings else "Root"

@@ -113,7 +113,7 @@ async def store_chunks(chunks: list[dict[str, Any]], document_id: int | None = N
                     (document_id, file_name, page_numbers, heading_context, raw_content, enriched_content,
                      dense_vector, sparse_lexicon)
                 VALUES
-                    (:document_id, :file_name, :page_numbers, :heading_context, :raw_content, :enriched_content,
+                    (:document_id, :file_name, CAST(:page_numbers AS INTEGER[]), :heading_context, :raw_content, :enriched_content,
                      CAST(:dense_vector AS vector), CAST(:sparse_lexicon AS jsonb))
             """)
             await db.execute(
@@ -126,7 +126,7 @@ async def store_chunks(chunks: list[dict[str, Any]], document_id: int | None = N
                     "raw_content": raw,
                     "enriched_content": enriched,
                     "dense_vector": _vector_to_str(hybrid["dense"]),
-                    "sparse_lexicon": json.dumps(hybrid["sparse"]),
+                    "sparse_lexicon": json.dumps(hybrid["sparse"], ensure_ascii=False),
                 },
             )
 
