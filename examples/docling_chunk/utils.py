@@ -24,7 +24,7 @@ def _init_converter() -> DocumentConverter:
 
     # opts.do_picture_classification = True
 
-    opts.do_picture_description = True
+    # opts.do_picture_description = True
 
     # ---- 图表提取 ----
     # opts.do_chart_extraction = True

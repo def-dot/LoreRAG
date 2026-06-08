@@ -10,9 +10,13 @@ HybridChunker 结合层级分块和滑动窗口：
 """
 from pathlib import Path
 from docling.chunking import HybridChunker
+from docling_core.transforms.chunker.tokenizer.huggingface import HuggingFaceTokenizer
+from transformers import AutoTokenizer
 from examples.docling_chunk.utils import _init_converter
 
 PDF_PATH = Path(__file__).resolve().parent.parent / "test.pdf"
+
+CHUNK_SIZE = 256
 
 
 def test_hybrid_chunker():
@@ -25,7 +29,11 @@ def test_hybrid_chunker():
     result = converter.convert(str(PDF_PATH))
     doc = result.document
 
-    chunker = HybridChunker(merge_peers=True)
+    # 先加载 transformers 的 tokenizer，再包装为 HuggingFaceTokenizer
+    hf_tok = AutoTokenizer.from_pretrained("sentence-transformers/all-MiniLM-L6-v2")
+    tokenizer = HuggingFaceTokenizer(tokenizer=hf_tok, max_tokens=CHUNK_SIZE)
+
+    chunker = HybridChunker(tokenizer=tokenizer, merge_peers=True)
 
     chunks = list(chunker.chunk(doc))
 
@@ -37,9 +45,10 @@ def test_hybrid_chunker():
         headings = getattr(meta, "headings", []) or []
         heading_ctx = " > ".join(headings) if headings else "Root"
         text = chunk.text
+        token_count = len(hf_tok.tokenize(text))
 
-        print(f"--- Chunk [{i}]  chars={len(text)}  heading=[{heading_ctx}]")
-        print(f"  {text[:200]}{'...' if len(text) > 200 else ''}")
+        print(f"--- Chunk [{i}]  chars={len(text)}  tokens={token_count}  heading=[{heading_ctx}]")
+        print(f"  {text}")
         print()
 
     return chunks
