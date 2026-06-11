@@ -24,7 +24,11 @@ dependencies = [
     "rapidocr-onnxruntime>=1.4.0",
     "sentence-transformers>=3.0.0",
     "flagembedding==1.4.0",
-    "transformers>=4.42.0,<5.9.0,!=5.0.*,!=5.1.*,!=5.2.*,!=5.3.*"
+    "transformers>=4.42.0,<5.9.0,!=5.0.*,!=5.1.*,!=5.2.*,!=5.3.*",
+    # PyTorch CUDA 13.0 (installed from PyTorch index)
+    "torch",
+    "torchvision",
+    "torchaudio",
 ]
 
 [project.optional-dependencies]
@@ -38,6 +42,9 @@ dev = [
     "mypy>=1.10",
     "pytest-cov>=5.0",
 ]
+
+[tool.uv]
+extra-index-url = ["https://download.pytorch.org/whl/cu130"]
 
 [build-system]
 requires = ["setuptools>=68.0"]

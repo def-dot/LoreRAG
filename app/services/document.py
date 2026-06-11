@@ -10,6 +10,10 @@ from typing import Any
 @lru_cache(maxsize=1)
 def _get_converter():
     """单例 DocumentConverter — 首次调用时加载 docling，之后复用"""
+    # Windows 不支持 Triton，禁用 torch.compile 以避免 TritonMissing 错误
+    import torch
+    torch._dynamo.config.disable = True  # type: ignore[attr-defined]
+
     from docling.datamodel.base_models import InputFormat
     from docling.datamodel.pipeline_options import PdfPipelineOptions, RapidOcrOptions
     from docling.document_converter import DocumentConverter, PdfFormatOption
@@ -27,8 +31,8 @@ def _get_converter():
     opts.do_formula_enrichment = True
     opts.do_code_enrichment = True
 
-    # opts.do_picture_classification = True
-    # opts.do_picture_description = True
+    opts.do_picture_classification = True
+    opts.do_picture_description = True
 
     # ---- 图表提取 ----
     # opts.do_chart_extraction = True
