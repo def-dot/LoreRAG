@@ -3,13 +3,10 @@
 from __future__ import annotations
 
 import os
-from functools import lru_cache
 from typing import Any
 
 
-@lru_cache(maxsize=1)
 def _get_converter():
-    """单例 DocumentConverter — 首次调用时加载 docling，之后复用"""
     # Windows 不支持 Triton，禁用 torch.compile 以避免 TritonMissing 错误
     import torch
     torch._dynamo.config.disable = True  # type: ignore[attr-defined]
@@ -31,8 +28,8 @@ def _get_converter():
     opts.do_formula_enrichment = True
     opts.do_code_enrichment = True
 
-    opts.do_picture_classification = True
-    opts.do_picture_description = True
+    # opts.do_picture_classification = True
+    # opts.do_picture_description = True
 
     # ---- 图表提取 ----
     # opts.do_chart_extraction = True
@@ -55,9 +52,7 @@ def _get_converter():
     )
 
 
-@lru_cache(maxsize=1)
 def _get_chunker():
-    """单例 HybridChunker — 首次调用时加载 transformers + docling 切片模块"""
     from transformers import AutoTokenizer
     from docling.chunking import HybridChunker  # type: ignore[attr-defined]
     from docling_core.transforms.chunker.tokenizer.huggingface import HuggingFaceTokenizer
@@ -75,9 +70,6 @@ def process_document(file_path: str) -> list[dict[str, Any]]:
     Docling PDF 全能力管线（OCR + 表格 + 公式 + 代码 + 图片分类 + 图片描述 + 图表提取） → HybridChunker 切片
 
     返回格式: [{"enriched_text": ..., "raw_text": ..., "metadata": {...}}, ...]
-
-    converter 和 chunker 通过 lru_cache 单例复用，首次调用时加载重量级库，
-    后续调用零开销。
     """
     converter = _get_converter()
     result = converter.convert(file_path)

@@ -17,7 +17,6 @@ def _get_model() -> Any:
     )
 
 
-@lru_cache(maxsize=1)
 def _get_tokenizer() -> Any:
     """获取模型的 tokenizer，用于将 token ID 解码为文本"""
     model = _get_model()
