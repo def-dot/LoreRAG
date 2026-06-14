@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { ref, nextTick, computed } from 'vue'
-import { Promotion } from '@element-plus/icons-vue'
+import { Promotion, ChatDotRound } from '@element-plus/icons-vue'
 import { useChatStore } from '../stores/chat'
 import MarkdownIt from 'markdown-it'
 
@@ -51,21 +51,21 @@ function clearChat() {
 
 <template>
   <div class="chat-page">
-    <!-- 消息列表 -->
     <div ref="chatContainer" class="chat-messages">
       <div v-if="messages.length === 0" class="empty-state">
-        <p class="empty-title">在下方输入问题，从知识库中检索答案</p>
-        <p class="empty-tip">支持自然语言提问，系统会检索最相关的文档切片</p>
+        <div class="empty-icon">
+          <el-icon :size="28"><ChatDotRound /></el-icon>
+        </div>
+        <p class="empty-title">向知识库提问</p>
+        <p class="empty-tip">输入问题，系统将检索最相关的文档切片并返回答案与来源</p>
       </div>
 
       <div v-for="(msg, i) in messages" :key="i" :class="['message-row', msg.role]">
         <div class="message-bubble">
-          <!-- 用户消息 -->
           <template v-if="msg.role === 'user'">
             <p>{{ msg.content }}</p>
           </template>
 
-          <!-- 助手消息 -->
           <template v-else>
             <div v-if="msg.loading" class="loading-dots">
               <span></span><span></span><span></span>
@@ -76,10 +76,10 @@ function clearChat() {
               <div v-if="msg.results?.length" class="result-list">
                 <div v-for="(r, ri) in msg.results" :key="ri" class="result-card">
                   <div class="result-header">
-                    <span class="result-source">
+                    <div class="result-source">
                       <el-tag size="small" type="info">{{ r.file_name }}</el-tag>
                       <el-tag v-if="r.page_numbers?.length" size="small">P{{ r.page_numbers[0] }}</el-tag>
-                    </span>
+                    </div>
                     <span class="result-score">相关度 {{ formatScore(r.score) }}</span>
                   </div>
                   <div v-if="r.heading_context && r.heading_context !== 'Root'" class="result-heading">
@@ -94,10 +94,16 @@ function clearChat() {
       </div>
     </div>
 
-    <!-- 输入区 -->
     <div class="chat-input-area">
-      <el-input v-model="inputQuery" type="textarea" :rows="2" placeholder="输入你的问题..." resize="none"
-        @keydown="handleKeydown" :disabled="messages.some((m) => m.loading)" />
+      <el-input
+        v-model="inputQuery"
+        type="textarea"
+        :rows="2"
+        placeholder="输入你的问题..."
+        resize="none"
+        @keydown="handleKeydown"
+        :disabled="messages.some((m) => m.loading)"
+      />
       <div class="input-actions">
         <el-button text size="small" @click="clearChat" :disabled="messages.length === 0">清空对话</el-button>
         <el-button type="primary" :icon="Promotion" :disabled="!canSend" @click="sendQuery">发送</el-button>
@@ -128,23 +134,44 @@ function clearChat() {
   align-items: center;
   justify-content: center;
   height: 100%;
-  color: #999;
+  color: var(--ink-3);
+}
+
+.empty-icon {
+  width: 60px;
+  height: 60px;
+  margin-bottom: 18px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 16px;
+  background: var(--brand-soft);
+  color: var(--brand);
 }
 
 .empty-title {
   font-size: 16px;
+  font-weight: 600;
+  color: var(--ink-2);
   margin-bottom: 8px;
 }
 
 .empty-tip {
   font-size: 13px;
-  color: #bbb;
+  color: var(--ink-4);
 }
 
-/* 消息气泡 */
 .message-row {
   display: flex;
   margin-bottom: 16px;
+  animation: rise 0.32s cubic-bezier(0.2, 0.7, 0.2, 1);
+}
+
+@keyframes rise {
+  from {
+    opacity: 0;
+    transform: translateY(6px);
+  }
 }
 
 .message-row.user {
@@ -158,25 +185,26 @@ function clearChat() {
 .message-bubble {
   max-width: 85%;
   padding: 12px 16px;
-  border-radius: 12px;
+  border-radius: 10px;
   font-size: 14px;
   line-height: 1.6;
 }
 
 .message-row.user .message-bubble {
-  background: #409eff;
+  background: var(--brand);
   color: #fff;
-  border-bottom-right-radius: 4px;
+  border-bottom-right-radius: 3px;
+  box-shadow: 0 1px 2px rgba(37, 99, 235, 0.2);
 }
 
 .message-row.assistant .message-bubble {
-  background: #fff;
-  color: #333;
-  border-bottom-left-radius: 4px;
-  box-shadow: 0 1px 4px rgba(0, 0, 0, 0.06);
+  background: var(--surface);
+  color: var(--ink);
+  border: 1px solid var(--border);
+  border-bottom-left-radius: 3px;
+  box-shadow: var(--shadow-xs);
 }
 
-/* Loading 动画 */
 .loading-dots {
   display: flex;
   gap: 6px;
@@ -186,7 +214,7 @@ function clearChat() {
 .loading-dots span {
   width: 8px;
   height: 8px;
-  background: #c0c4cc;
+  background: var(--ink-4);
   border-radius: 50%;
   animation: bounce 1.2s infinite ease-in-out;
 }
@@ -200,23 +228,20 @@ function clearChat() {
 }
 
 @keyframes bounce {
-
   0%,
   80%,
   100% {
     transform: scale(0.6);
     opacity: 0.4;
   }
-
   40% {
     transform: scale(1);
     opacity: 1;
   }
 }
 
-/* 检索结果 */
 .result-summary {
-  color: #666;
+  color: var(--ink-3);
   margin-bottom: 12px;
 }
 
@@ -227,8 +252,9 @@ function clearChat() {
 }
 
 .result-card {
-  background: #f9fafb;
-  border: 1px solid #ebeef5;
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  border-left: 3px solid var(--brand);
   border-radius: 8px;
   padding: 12px;
 }
@@ -247,20 +273,20 @@ function clearChat() {
 
 .result-score {
   font-size: 12px;
-  color: #67c23a;
+  color: var(--success);
   font-weight: 600;
 }
 
 .result-heading {
   font-size: 12px;
-  color: #909399;
+  color: var(--ink-3);
   margin-bottom: 6px;
 }
 
 .result-content {
   font-size: 13px;
   line-height: 1.7;
-  color: #444;
+  color: var(--ink-2);
 }
 
 .result-content :deep(table) {
@@ -271,19 +297,18 @@ function clearChat() {
 
 .result-content :deep(th),
 .result-content :deep(td) {
-  border: 1px solid #dcdfe6;
+  border: 1px solid var(--border-strong);
   padding: 4px 8px;
   font-size: 12px;
 }
 
 .result-content :deep(th) {
-  background: #f0f2f5;
+  background: var(--surface-3);
 }
 
-/* 输入区 */
 .chat-input-area {
   padding: 12px 0 0;
-  border-top: 1px solid #eee;
+  border-top: 1px solid var(--border);
 }
 
 .input-actions {

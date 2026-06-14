@@ -25,23 +25,19 @@ async function handleLogout() {
 
 <template>
   <el-container class="layout">
-    <!-- 侧边栏 -->
     <el-aside width="220px" class="aside">
-      <div class="logo">
+      <div class="brand">
+        <div class="brand-mark">L</div>
         <h2>LoreRAG</h2>
       </div>
-      <el-menu :default-active="activeMenu" router class="menu" background-color="transparent" text-color="#ccc"
-        active-text-color="#409eff">
+      <el-menu :default-active="activeMenu" router class="menu">
         <el-menu-item v-for="item in menuItems" :key="item.path" :index="item.path">
-          <el-icon>
-            <component :is="item.icon" />
-          </el-icon>
+          <el-icon><component :is="item.icon" /></el-icon>
           <span>{{ item.title }}</span>
         </el-menu-item>
       </el-menu>
     </el-aside>
 
-    <!-- 主内容 -->
     <el-container>
       <el-header class="header">
         <span class="page-title">{{ route.meta.title }}</span>
@@ -60,42 +56,81 @@ async function handleLogout() {
 }
 
 .aside {
-  background: #1a1a2e;
-  border-right: 1px solid rgba(255, 255, 255, 0.06);
+  background: var(--surface);
+  border-right: 1px solid var(--border);
 }
 
-.logo {
-  padding: 20px 24px 12px;
-  border-bottom: 1px solid rgba(255, 255, 255, 0.06);
+.brand {
+  height: 60px;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 0 20px;
+  border-bottom: 1px solid var(--border);
 }
 
-.logo h2 {
-  color: #e0e0e0;
-  font-size: 22px;
-  margin: 0;
+.brand-mark {
+  width: 30px;
+  height: 30px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 8px;
+  background: var(--brand);
+  color: #fff;
+  font-size: 15px;
+  font-weight: 700;
+  letter-spacing: -0.02em;
+}
+
+.brand h2 {
+  font-size: 18px;
+  font-weight: 700;
+  color: var(--ink);
+  letter-spacing: -0.01em;
 }
 
 .menu {
-  border-right: none;
-  margin-top: 8px;
+  padding: 8px;
+}
+
+.menu :deep(.el-menu-item) {
+  height: 42px;
+  line-height: 42px;
+  border-radius: 6px;
+  margin-bottom: 2px;
+  color: var(--ink-2);
+  font-weight: 500;
+}
+
+.menu :deep(.el-menu-item:hover) {
+  background: var(--surface-2);
+  color: var(--ink);
+}
+
+.menu :deep(.el-menu-item.is-active) {
+  background: var(--brand-soft);
+  color: var(--brand);
 }
 
 .header {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  background: #fff;
-  border-bottom: 1px solid #eee;
+  height: 60px;
+  background: var(--surface);
+  border-bottom: 1px solid var(--border);
+  padding: 0 24px;
 }
 
 .page-title {
   font-size: 16px;
   font-weight: 600;
-  color: #333;
+  color: var(--ink);
 }
 
 .main {
-  background: #f5f7fa;
+  background: var(--bg);
   overflow-y: auto;
 }
 </style>

@@ -1,10 +1,164 @@
+/* ============================================================
+   LoreRAG — Enterprise admin design system
+   Clean neutrals · professional blue · crisp surfaces
+   ============================================================ */
+
+:root {
+  /* --- Surfaces --- */
+  --bg: #f5f7fa;
+  --surface: #ffffff;
+  --surface-2: #f3f6fb;
+  --surface-3: #e9eef5;
+
+  /* --- Text (slate) --- */
+  --ink: #0f172a;
+  --ink-2: #334155;
+  --ink-3: #64748b;
+  --ink-4: #94a3b8;
+
+  /* --- Lines --- */
+  --border: #e4e8ee;
+  --border-strong: #d4dae2;
+
+  /* --- Brand / status --- */
+  --brand: #2563eb;
+  --brand-hover: #1d4ed8;
+  --brand-soft: #eaf1ff;
+  --brand-soft-2: #dce8ff;
+  --success: #16a34a;
+  --success-soft: #e8f6ee;
+  --danger: #dc2626;
+  --warning: #d97706;
+
+  /* --- Elevation --- */
+  --shadow-xs: 0 1px 2px rgba(15, 23, 42, 0.04);
+  --shadow-sm: 0 1px 2px rgba(15, 23, 42, 0.04), 0 2px 8px rgba(15, 23, 42, 0.04);
+  --shadow-md: 0 4px 16px rgba(15, 23, 42, 0.08);
+
+  /* --- Type --- */
+  --font-sans: 'Manrope', system-ui, -apple-system, 'PingFang SC', 'Microsoft YaHei', sans-serif;
+
+  /* --- Element Plus theme overrides --- */
+  --el-color-primary: #2563eb;
+  --el-color-primary-light-3: #4d82ee;
+  --el-color-primary-light-5: #7ba4f3;
+  --el-color-primary-light-7: #aecdf9;
+  --el-color-primary-light-8: #cde0fc;
+  --el-color-primary-light-9: #eaf1ff;
+  --el-color-primary-dark-2: #1d4ed8;
+  --el-color-success: #16a34a;
+  --el-color-danger: #dc2626;
+  --el-color-warning: #d97706;
+  --el-text-color-primary: var(--ink);
+  --el-text-color-regular: var(--ink-2);
+  --el-text-color-secondary: var(--ink-3);
+  --el-text-color-placeholder: var(--ink-4);
+  --el-border-color: var(--border-strong);
+  --el-border-color-light: var(--border);
+  --el-border-color-lighter: var(--border);
+  --el-fill-color-blank: var(--surface);
+  --el-bg-color: var(--surface);
+  --el-bg-color-page: var(--bg);
+  --el-border-radius-base: 6px;
+}
+
 * {
   margin: 0;
   padding: 0;
   box-sizing: border-box;
 }
 
-html, body, #app {
+html,
+body,
+#app {
   height: 100%;
-  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
+}
+
+body {
+  font-family: var(--font-sans);
+  color: var(--ink);
+  background: var(--bg);
+  font-size: 14px;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+::selection {
+  background: var(--brand-soft-2);
+  color: var(--ink);
+}
+
+/* --- Element Plus: buttons --- */
+.el-button--primary {
+  font-weight: 600;
+}
+
+.el-button {
+  border-radius: var(--el-border-radius-base);
+}
+
+/* --- Element Plus: cards --- */
+.el-card {
+  border-radius: 10px;
+  border-color: var(--border);
+  box-shadow: var(--shadow-xs);
+}
+
+.el-card__header {
+  border-bottom-color: var(--border) !important;
+}
+
+/* --- Element Plus: menu --- */
+.el-menu {
+  border-right: none !important;
+}
+
+/* --- Element Plus: tables --- */
+.el-table {
+  --el-table-border-color: var(--border);
+  --el-table-header-bg-color: var(--surface-2);
+  --el-table-header-text-color: var(--ink-2);
+  --el-table-text-color: var(--ink-2);
+  --el-table-row-hover-bg-color: var(--surface-2);
+}
+
+.el-table th.el-table__cell {
+  background: var(--surface-2) !important;
+  font-weight: 600;
+  font-size: 12.5px;
+  color: var(--ink-2) !important;
+  letter-spacing: 0.02em;
+}
+
+.el-table td.el-table__cell {
+  font-size: 13.5px;
+}
+
+.el-table--striped .el-table__body tr.el-table__row--striped td.el-table__cell {
+  background: #fafbfd !important;
+}
+
+/* --- Element Plus: tags --- */
+.el-tag {
+  border-radius: 5px;
+  font-weight: 500;
+}
+
+/* Scrollbar */
+::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+::-webkit-scrollbar-thumb {
+  background: #cbd3dc;
+  border-radius: 6px;
+  border: 2px solid transparent;
+  background-clip: content-box;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: #aab4c0;
+  background-clip: content-box;
 }

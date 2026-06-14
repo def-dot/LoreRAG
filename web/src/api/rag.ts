@@ -4,6 +4,9 @@ export interface DocumentItem {
   file_name: string
   chunk_count: number
   page_numbers: number[]
+  created_at: string | null
+  parse_started_at: string | null
+  parse_completed_at: string | null
 }
 
 export interface SearchResult {
