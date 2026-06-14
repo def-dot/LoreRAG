@@ -48,7 +48,10 @@ class DocumentListItem(BaseModel):
     file_ext: str | None = Field(default=None, description="文件后缀")
     status: str = Field(description="处理状态")
     chunk_count: int = Field(default=0, description="切片数量")
+    retry_count: int = Field(default=0, description="重试次数")
     created_at: datetime | None = Field(default=None, description="上传时间")
+    parse_started_at: datetime | None = Field(default=None, description="开始解析时间")
+    parse_completed_at: datetime | None = Field(default=None, description="解析完成时间")
     updated_at: datetime | None = Field(default=None, description="更新时间")
 
 
@@ -70,7 +73,10 @@ class DocumentDetail(BaseModel):
     status: str = Field(description="处理状态")
     chunk_count: int = Field(default=0, description="切片数量")
     error_message: str | None = Field(default=None, description="错误信息")
+    retry_count: int = Field(default=0, description="重试次数")
     created_at: datetime | None = Field(default=None, description="上传时间")
+    parse_started_at: datetime | None = Field(default=None, description="开始解析时间")
+    parse_completed_at: datetime | None = Field(default=None, description="解析完成时间")
     updated_at: datetime | None = Field(default=None, description="更新时间")
 
 

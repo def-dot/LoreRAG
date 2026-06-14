@@ -62,8 +62,11 @@ async def update_document_status(
         doc.status = status
         doc.updated_at = datetime.now()
 
+        if status == DocumentStatus.PROCESSING:
+            doc.parse_started_at = datetime.now()
         if status == DocumentStatus.COMPLETED:
             doc.chunk_count = chunk_count
+            doc.parse_completed_at = datetime.now()
         if error_message is not None:
             doc.error_message = error_message
 
@@ -230,7 +233,10 @@ async def list_documents(db: AsyncSession) -> list[DocumentListItem]:
             file_ext=doc.file_ext,
             status=doc.status,
             chunk_count=doc.chunk_count,
+            retry_count=doc.retry_count,
             created_at=doc.created_at,
+            parse_started_at=doc.parse_started_at,
+            parse_completed_at=doc.parse_completed_at,
             updated_at=doc.updated_at,
         )
         for doc in rows
@@ -252,7 +258,10 @@ async def get_document(db: AsyncSession, document_id: int) -> DocumentDetail | N
         status=doc.status,
         chunk_count=doc.chunk_count,
         error_message=doc.error_message,
+        retry_count=doc.retry_count,
         created_at=doc.created_at,
+        parse_started_at=doc.parse_started_at,
+        parse_completed_at=doc.parse_completed_at,
         updated_at=doc.updated_at,
     )
 

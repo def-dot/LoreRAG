@@ -37,7 +37,10 @@ class Document(SQLModel, table=True):
     status: str = Field(default=DocumentStatus.PENDING, max_length=20)
     chunk_count: int = Field(default=0, description="切片数量")
     error_message: str | None = Field(default=None, sa_type=Text)
-    created_at: datetime | None = Field(default=None)
+    retry_count: int = Field(default=0, description="解析重试次数")
+    created_at: datetime | None = Field(default=None, description="上传时间")
+    parse_started_at: datetime | None = Field(default=None, description="开始解析时间")
+    parse_completed_at: datetime | None = Field(default=None, description="解析完成时间")
     updated_at: datetime | None = Field(default=None)
 
 

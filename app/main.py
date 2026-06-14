@@ -11,6 +11,7 @@ from app.core.exceptions import register_exception_handlers
 from app.core.logging import get_logger, setup_logging
 from app.core.middleware import access_log_middleware
 from app.routers import auth, external_api, items, rag, system, users, webhooks
+from app.services.scheduler import recover_stuck
 
 logger = get_logger(__name__)
 
@@ -28,6 +29,10 @@ async def lifespan(app: FastAPI) -> Any:
     # except Exception:
     #     logger.critical("Failed to initialize database", exc_info=True)
     #     raise
+
+    # 恢复服务重启前卡住的文档
+    await recover_stuck()
+
     yield
     logger.info("Shutting down...")
 
