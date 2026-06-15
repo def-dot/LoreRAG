@@ -20,7 +20,7 @@ logger = get_logger(__name__)
 MAX_CONCURRENT = 2       # 同时解析数（跨 worker 全局生效）
 MAX_RETRIES = 3           # 最大重试次数
 RETRY_DELAY_BASE = 5      # 退避基数（秒），指数递增: 5 → 10 → 20
-SLOT_TTL = 600            # 槽位锁 TTL（秒），超时自动释放防死锁
+SLOT_TTL = 1200            # 槽位锁 TTL（秒），超时自动释放防死锁
 
 # ---- 状态 ----
 _tasks: dict[int, asyncio.Task] = {}  # doc_id → task（所有未完成的）
@@ -100,7 +100,10 @@ async def _run(document_id: int) -> None:
         finally:
             _active.discard(document_id)
             if slot:
-                await r.delete(slot)
+                try:
+                    await r.delete(slot)
+                except redis.RedisError:
+                    pass
     except asyncio.CancelledError:
         await update_document_status(document_id, DocumentStatus.FAILED, error_message="用户取消")
         logger.info("Doc#%d cancelled", document_id)
