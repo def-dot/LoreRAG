@@ -48,6 +48,7 @@ class Settings(BaseSettings):
     VLM_API_KEY: str = ""
     CHUNK_SIZE: int = 1500
     CHUNK_OVERLAP: int = 200
+    MAX_FILE_SIZE: int = 50 * 1024 * 1024  # 最大文件大小：50MB
 
     model_config = {"env_file": ".env", "env_file_encoding": "utf-8"}
 
