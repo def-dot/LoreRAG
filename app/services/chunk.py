@@ -48,38 +48,47 @@ async def insert_chunks(chunks: list[dict[str, Any]], document_id: int) -> int:
     返回写入的切片数量
     """
     if not chunks:
+        logger.warning("No chunks to insert for document_id=%d", document_id)
         return 0
 
     texts = [c["enriched_text"] for c in chunks]
     hybrid_outputs = encode_hybrid_batch(texts)
 
     async with AsyncSessionLocal() as db:
+        inserted_count = 0
         for chunk_data, hybrid in zip(chunks, hybrid_outputs, strict=True):
-            meta = chunk_data["metadata"]
-            await db.execute(
-                text(
-                    """
-                    INSERT INTO document_chunks
-                        (document_id, file_name, page_numbers, heading_context,
-                         raw_content, enriched_content, dense_vector, sparse_lexicon)
-                    VALUES
-                        (:document_id, :file_name, CAST(:page_numbers AS INTEGER[]),
-                         :heading_context, :raw_content, :enriched_content,
-                         CAST(:dense_vector AS vector), CAST(:sparse_lexicon AS jsonb))
-                    """
-                ),
-                {
-                    "document_id": document_id,
-                    "file_name": meta["source_file"],
-                    "page_numbers": meta["page_numbers"],
-                    "heading_context": meta["heading_context"],
-                    "raw_content": chunk_data["raw_text"],
-                    "enriched_content": chunk_data["enriched_text"],
-                    "dense_vector": _vector_to_str(hybrid["dense"]),
-                    "sparse_lexicon": json.dumps(hybrid["sparse"], ensure_ascii=False),
-                },
-            )
-        await db.commit()
+            try:
+                meta = chunk_data["metadata"]
+                await db.execute(
+                    text(
+                        """
+                        INSERT INTO document_chunks
+                            (document_id, file_name, page_numbers, heading_context,
+                             raw_content, enriched_content, dense_vector, sparse_lexicon)
+                        VALUES
+                            (:document_id, :file_name, CAST(:page_numbers AS INTEGER[]),
+                             :heading_context, :raw_content, :enriched_content,
+                             CAST(:dense_vector AS vector), CAST(:sparse_lexicon AS jsonb))
+                        """
+                    ),
+                    {
+                        "document_id": document_id,
+                        "file_name": meta["source_file"],
+                        "page_numbers": meta["page_numbers"],
+                        "heading_context": meta["heading_context"],
+                        "raw_content": chunk_data["raw_text"],
+                        "enriched_content": chunk_data["enriched_text"],
+                        "dense_vector": _vector_to_str(hybrid["dense"]),
+                        "sparse_lexicon": json.dumps(hybrid["sparse"], ensure_ascii=False),
+                    },
+                )
+                inserted_count += 1
+            except Exception as e:
+                logger.error("Failed to insert chunk %d for document %d: %s",
+                            inserted_count + 1, document_id, e, exc_info=True)
+                # 单个chunk失败不影响其他chunk，继续处理
+                continue
 
-    logger.info("Stored %d chunks (document_id=%d)", len(chunks), document_id)
-    return len(chunks)
+        await db.commit()
+        logger.info("Stored %d/%d chunks (document_id=%d)", inserted_count, len(chunks), document_id)
+        return inserted_count

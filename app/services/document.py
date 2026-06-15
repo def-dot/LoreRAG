@@ -12,10 +12,10 @@ logger = get_logger(__name__)
 
 
 async def document_exists(file_name: str) -> bool:
-    """检查同名文件是否已存在（排除已失败的记录）"""
+    """检查同名文件是否已存在"""
     async with AsyncSessionLocal() as db:
         stmt = select(Document).where(
-            Document.file_name == file_name
+            Document.file_name == file_name,
         )
         result = await db.execute(stmt)
         return result.scalar_one_or_none() is not None
@@ -138,9 +138,6 @@ async def delete_document_by_id(document_id: int) -> tuple[int, str]:
         doc = await db.get(Document, document_id)
         if doc is None:
             return 0, ""
-
-        if doc.status in (DocumentStatus.PENDING, DocumentStatus.PROCESSING):
-            raise ValueError("文档正在处理中，请先取消后再删除")
 
         file_name = doc.file_name
         file_path = doc.file_path
