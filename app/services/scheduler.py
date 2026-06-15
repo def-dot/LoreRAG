@@ -1,6 +1,7 @@
 """文档解析并发控制 — Semaphore 限流 + 重试 + 可取消 + 启动恢复"""
 
 import asyncio
+import os
 
 from sqlalchemy import select
 
@@ -85,35 +86,51 @@ async def _run_with_semaphore(document_id: int) -> None:
         await update_document_status(document_id, DocumentStatus.FAILED, error_message="用户取消")
         logger.info("Doc#%d cancelled", document_id)
         raise
-    except Exception:
-        logger.exception("Doc#%d crashed unexpectedly", document_id)
 
 
 async def _process_one(document_id: int) -> None:
-    """单个文档的完整解析管线，含重试"""
+    """单个文档的完整解析管线，含重试和详细错误处理"""
     # ---- 1. 读取文档信息 ----
     doc = await get_document(document_id)
     if doc is None:
         logger.warning("Doc#%d not found in DB, skip", document_id)
         return
+
     file_path = doc.file_path
+    # 检查文件是否存在
+    if not os.path.exists(file_path):
+        error_msg = f"源文件不存在: {file_path}"
+        logger.error("Doc#%d: %s", document_id, error_msg)
+        await update_document_status(document_id, DocumentStatus.FAILED, error_message=error_msg)
+        return
 
     await update_document_status(document_id, DocumentStatus.PROCESSING)
 
     # ---- 2. 解析 + 入库 ----
     try:
+        logger.info("Doc#%d: starting parsing", document_id)
         chunks = await asyncio.to_thread(document_chunk, file_path)
 
-        count = 0 if not chunks else await insert_chunks(chunks, document_id=document_id)
+        inserted_count = 0
+        if chunks:
+            logger.info("Doc#%d: parsed %d chunks, inserting into database", document_id, len(chunks))
+            inserted_count = await insert_chunks(chunks, document_id=document_id)
 
-        await update_document_status(document_id, DocumentStatus.COMPLETED, chunk_count=count)
+        if inserted_count == 0:
+            logger.warning("Doc#%d: 没有成功存储任何切片 chunks count: %d, inserted count: %d", document_id, len(chunks), inserted_count)
+            await update_document_status(document_id, DocumentStatus.FAILED,
+                                         error_message="没有成功存储任何切片，数据库写入失败")
+            return
 
-        logger.info("Doc#%d completed: %d chunks", document_id, count)
+        await update_document_status(document_id, DocumentStatus.COMPLETED, chunk_count=inserted_count)
+        logger.info("Doc#%d completed: %d chunks stored", document_id, inserted_count)
 
     except asyncio.CancelledError:
-        raise  # 交给外层 _run_with_semaphore 处理
+        logger.info("Doc#%d parsing cancelled by user", document_id)
+        await update_document_status(document_id, DocumentStatus.FAILED, error_message="用户取消")
 
     except Exception as exc:
+        # 其他异常 - 进行重试处理
         # ---- 3. 重试 / 彻底失败 ----
         doc = await get_document(document_id)
         retry = (doc.retry_count or 0) + 1 if doc else 1
