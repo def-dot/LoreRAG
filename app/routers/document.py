@@ -51,16 +51,31 @@ async def upload_document(
 
     content = await file.read()
 
+    # 文件大小检查
+    file_size = len(content)
+    if file_size == 0:
+        raise HTTPException(
+            status_code=400,
+            detail="文件内容为空",
+        )
+    if file_size > settings.MAX_FILE_SIZE:
+        raise HTTPException(
+            status_code=413,
+            detail=f"文件过大：{file_size / 1024 / 1024:.2f}MB，最大支持 {settings.MAX_FILE_SIZE / 1024 / 1024:.0f}MB",
+        )
+
+    logger.info("Uploading file: %s (%.2f MB)", file_name, file_size / 1024 / 1024)
+
+    with open(file_path, "wb") as f:
+        f.write(content)
+
     doc = await document.create_document(
         file_name=file_name,
         file_path=file_path,
         file_size=len(content),
         file_ext=file_ext,
     )
-
-    with open(file_path, "wb") as f:
-        f.write(content)
-
+    
     # 丢入异步解析队列（限流 + 重试 + 启动恢复）
     schedule(doc.id)
 
@@ -87,7 +102,6 @@ async def list_document_chunks(document_id: int) -> Any:
 @router.get("/{document_id}/download")
 async def download_document(document_id: int) -> Any:
     """下载原始文件"""
-    print("?????????")
     doc = await document.get_document(document_id)
     if doc is None:
         raise HTTPException(status_code=404, detail=f"文档不存在: {document_id}")
@@ -140,10 +154,11 @@ async def delete_document(
     document_id: int,
 ) -> Any:
     """删除指定文档及其所有切片"""
-    try:
-        deleted_chunks, file_name = await document.delete_document_by_id(document_id)
-    except ValueError as e:
-        raise HTTPException(status_code=409, detail=str(e))
-    if deleted_chunks == 0 and not file_name:
+    doc = await document.get_document(document_id)
+    if doc is None:
         raise HTTPException(status_code=404, detail=f"文档不存在: {document_id}")
+    if doc.status in (DocumentStatus.PENDING, DocumentStatus.PROCESSING):
+        cancel(document_id)
+
+    deleted_chunks, file_name = await document.delete_document_by_id(document_id)
     return DeleteResponse(deleted_chunks=deleted_chunks, file_name=file_name)

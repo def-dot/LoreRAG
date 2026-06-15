@@ -241,7 +241,6 @@ onUnmounted(() => {
               type="danger"
               text
               size="small"
-              :disabled="row.status === 'pending' || row.status === 'processing'"
               @click.stop="handleDelete(row)"
             >
               删除
