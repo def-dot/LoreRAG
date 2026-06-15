@@ -50,6 +50,10 @@ class Settings(BaseSettings):
     CHUNK_OVERLAP: int = 200
     MAX_FILE_SIZE: int = 50 * 1024 * 1024  # 最大文件大小：50MB
 
+    # Redis
+    REDIS_PASSWORD: str = ""
+    REDIS_URL: str = "redis://localhost:6379/0"
+
     model_config = {"env_file": ".env", "env_file_encoding": "utf-8"}
 
 
