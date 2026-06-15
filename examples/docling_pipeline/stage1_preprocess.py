@@ -18,7 +18,7 @@ PDF_PATH = Path(__file__).resolve().parent.parent / "test.pdf"
 
 @timed("Stage 1: Preprocess")
 def run(conv_res: ConversionResult, pages: list[Page]):
-    model = PagePreprocessingModel(options=PagePreprocessingOptions(images_scale=2.0))
+    model = PagePreprocessingModel(options=PagePreprocessingOptions(images_scale=1.0))
 
     print("=" * 60)
     print("Stage 1: Preprocess")

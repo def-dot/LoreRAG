@@ -17,6 +17,7 @@ const chunks = ref<ChunkItem[]>([])
 const chunkDocName = ref('')
 
 async function openChunks(row: DocumentItem) {
+  if (row.status === 'failed') return
   chunkDocName.value = row.file_name
   chunkDrawer.value = true
   chunkLoading.value = true
@@ -214,37 +215,32 @@ onUnmounted(() => {
             <span v-else class="text-muted">-</span>
           </template>
         </el-table-column>
-        <el-table-column label="操作" width="160" align="center">
+        <el-table-column label="操作" width="140" align="center">
           <template #default="{ row }">
-            <template v-if="row.status === 'pending' || row.status === 'processing'">
-              <el-button :icon="VideoPause" type="warning" text size="small" @click.stop="handleCancel(row)">
-                取消
-              </el-button>
-            </template>
-            <template v-if="row.status === 'failed'">
-              <el-button :icon="RefreshRight" type="primary" text size="small" @click.stop="handleRetry(row)">
-                重试
-              </el-button>
-            </template>
-            <a
-              v-if="row.status === 'completed'"
-              :href="getDownloadUrl(row.id)"
-              class="download-link"
-              @click.stop
-            >
-              <el-button :icon="Download" type="primary" text size="small">
-                下载
-              </el-button>
-            </a>
-            <el-button
-              :icon="Delete"
-              type="danger"
-              text
-              size="small"
-              @click.stop="handleDelete(row)"
-            >
-              删除
-            </el-button>
+            <span class="action-slot">
+              <template v-if="row.status === 'pending' || row.status === 'processing'">
+                <el-tooltip content="取消">
+                  <el-button :icon="VideoPause" type="warning" text size="small" @click.stop="handleCancel(row)" />
+                </el-tooltip>
+              </template>
+              <template v-else-if="row.status === 'failed'">
+                <el-tooltip content="重试">
+                  <el-button :icon="RefreshRight" type="primary" text size="small" @click.stop="handleRetry(row)" />
+                </el-tooltip>
+              </template>
+            </span>
+            <span class="action-slot">
+              <a :href="getDownloadUrl(row.id)" class="download-link" @click.stop>
+                <el-tooltip content="下载">
+                  <el-button :icon="Download" type="primary" text size="small" />
+                </el-tooltip>
+              </a>
+            </span>
+            <span class="action-slot">
+              <el-tooltip content="删除">
+                <el-button :icon="Delete" type="danger" text size="small" @click.stop="handleDelete(row)" />
+              </el-tooltip>
+            </span>
           </template>
         </el-table-column>
       </el-table>
@@ -426,6 +422,14 @@ onUnmounted(() => {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.action-slot {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 32px;
+  height: 24px;
 }
 
 .download-link {

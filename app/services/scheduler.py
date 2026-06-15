@@ -130,7 +130,6 @@ async def _process_one(document_id: int) -> None:
         await update_document_status(document_id, DocumentStatus.FAILED, error_message="用户取消")
 
     except Exception as exc:
-        # 其他异常 - 进行重试处理
         # ---- 3. 重试 / 彻底失败 ----
         doc = await get_document(document_id)
         retry = (doc.retry_count or 0) + 1 if doc else 1

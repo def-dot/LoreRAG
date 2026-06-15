@@ -38,7 +38,7 @@ def _init_converter() -> DocumentConverter:
     # opts.generate_page_images = True
     # opts.generate_picture_images = True
     # opts.generate_table_images = True
-    opts.images_scale = 2.0
+    opts.images_scale = 1.0
 
     return DocumentConverter(
         format_options={
