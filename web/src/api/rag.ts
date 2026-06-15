@@ -1,6 +1,7 @@
 import request from './request'
 
 export interface DocumentItem {
+  id: number
   file_name: string
   chunk_count: number
   page_numbers: number[]
@@ -23,7 +24,7 @@ export function uploadDocument(file: File) {
   const form = new FormData()
   form.append('file', file)
   return request.post<{ code: number; msg: string; data: { file_name: string; status: string } }>(
-    '/rag/upload',
+    '/document/upload',
     form,
   )
 }
@@ -31,14 +32,14 @@ export function uploadDocument(file: File) {
 // 获取文档列表
 export function getDocuments() {
   return request.get<{ code: number; msg: string; data: { items: DocumentItem[]; total: number } }>(
-    '/rag/documents',
+    '/document/',
   )
 }
 
 // 删除文档
-export function deleteDocument(fileName: string) {
-  return request.delete<{ code: number; msg: string; data: { deleted_chunks: number } }>(
-    `/rag/documents/${encodeURIComponent(fileName)}`,
+export function deleteDocument(documentId: number) {
+  return request.delete<{ code: number; msg: string; data: { deleted_chunks: number; file_name: string } }>(
+    `/document/${documentId}`,
   )
 }
 

@@ -1,105 +1,148 @@
-"""文档处理服务 — Docling PDF 全能力管线（重量级库延迟导入，单例复用）"""
-
-from __future__ import annotations
-
 import os
-from typing import Any
+from datetime import datetime
+
+from sqlalchemy import delete, select
+
+from app.core.database import AsyncSessionLocal
+from app.core.logging import get_logger
+from app.models.document import Document, DocumentChunk, DocumentStatus
+from app.schemas.rag import DocumentDetail, DocumentListItem
+
+logger = get_logger(__name__)
 
 
-def _get_converter():
-    # Windows 不支持 Triton，禁用 torch.compile 以避免 TritonMissing 错误
-    import torch
-    torch._dynamo.config.disable = True  # type: ignore[attr-defined]
-
-    from docling.datamodel.base_models import InputFormat
-    from docling.datamodel.pipeline_options import PdfPipelineOptions, RapidOcrOptions
-    from docling.document_converter import DocumentConverter, PdfFormatOption
-
-    opts = PdfPipelineOptions()
-
-    opts.document_timeout = 300.0
-
-    # ---- OCR ----
-    opts.do_ocr = True
-    opts.ocr_options = RapidOcrOptions()
-
-    opts.do_table_structure = True
-
-    opts.do_formula_enrichment = True
-    opts.do_code_enrichment = True
-
-    # opts.do_picture_classification = True
-    # opts.do_picture_description = True
-
-    # ---- 图表提取 ----
-    # opts.do_chart_extraction = True
-    # opts.chart_extraction_options = ChartExtractionModelOptions(
-    #     chart2csv=True,
-    #     chart2code=True,
-    #     chart2summary=True,
-    # )
-
-    # ---- 图片生成 ----
-    opts.generate_page_images = True
-    opts.generate_picture_images = True
-    opts.generate_table_images = True
-    opts.images_scale = 2.0
-
-    return DocumentConverter(
-        format_options={
-            InputFormat.PDF: PdfFormatOption(pipeline_options=opts),
-        }
-    )
+async def create_document(
+    file_name: str,
+    file_path: str | None = None,
+    file_size: int | None = None,
+    file_ext: str | None = None,
+) -> Document:
+    now = datetime.now()
+    async with AsyncSessionLocal() as db:
+        doc = Document(
+            file_name=file_name,
+            file_path=file_path,
+            file_size=file_size,
+            file_ext=file_ext,
+            status=DocumentStatus.PENDING,
+            created_at=now,
+            updated_at=now,
+        )
+        db.add(doc)
+        await db.commit()
+        await db.refresh(doc)
+        return doc
 
 
-def _get_chunker():
-    from transformers import AutoTokenizer
-    from docling.chunking import HybridChunker  # type: ignore[attr-defined]
-    from docling_core.transforms.chunker.tokenizer.huggingface import HuggingFaceTokenizer
+async def update_document_status(
+    document_id: int,
+    status: str,
+    chunk_count: int = 0,
+    error_message: str | None = None,
+    retry_count: int = 0,
+) -> Document:
+    """更新文档处理状态"""
+    async with AsyncSessionLocal() as db:
+        doc = await db.get(Document, document_id)
+        if doc is None:
+            logger.warning("Document %d not found, skip status update", document_id)
+            return
 
-    bge_tok = AutoTokenizer.from_pretrained("./hub/bge-m3")
-    tokenizer = HuggingFaceTokenizer(tokenizer=bge_tok, max_tokens=512)
-    return HybridChunker(tokenizer=tokenizer)
+        doc.status = status
+        doc.updated_at = datetime.now()
+
+        if status == DocumentStatus.PROCESSING:
+            doc.parse_started_at = datetime.now()
+        if status == DocumentStatus.COMPLETED:
+            doc.chunk_count = chunk_count
+            doc.parse_completed_at = datetime.now()
+        if error_message is not None:
+            doc.error_message = error_message
+        if retry_count:
+            doc.retry_count = retry_count
+
+        db.add(doc)
+        await db.commit()
+        await db.refresh(doc)
+        logger.info("Document %d status updated to %s", document_id, status)
+        return doc
 
 
-def process_document(file_path: str) -> list[dict[str, Any]]:
-    """
-    解析 PDF → 智能切片
+async def list_documents() -> list[DocumentListItem]:
+    """列出所有文档及其处理状态"""
+    async with AsyncSessionLocal() as db:
+        stmt = select(Document).order_by(Document.created_at.desc())  # type: ignore[union-attr]
+        rows = (await db.execute(stmt)).scalars().all()
 
-    处理链：
-    Docling PDF 全能力管线（OCR + 表格 + 公式 + 代码 + 图片分类 + 图片描述 + 图表提取） → HybridChunker 切片
+        return [
+            DocumentListItem(
+                id=doc.id,  # type: ignore[arg-type]
+                file_name=doc.file_name,
+                file_path=doc.file_path,
+                file_size=doc.file_size,
+                file_ext=doc.file_ext,
+                status=doc.status,
+                chunk_count=doc.chunk_count,
+                retry_count=doc.retry_count,
+                created_at=doc.created_at,
+                parse_started_at=doc.parse_started_at,
+                parse_completed_at=doc.parse_completed_at,
+                updated_at=doc.updated_at,
+            )
+            for doc in rows
+        ]
 
-    返回格式: [{"enriched_text": ..., "raw_text": ..., "metadata": {...}}, ...]
-    """
-    converter = _get_converter()
-    result = converter.convert(file_path)
-    doc = result.document
 
-    chunker = _get_chunker()
-    doc_chunks = list(chunker.chunk(doc))
+async def get_document(document_id: int) -> DocumentDetail | None:
+    """获取单个文档详情"""
+    async with AsyncSessionLocal() as db:
+        doc = await db.get(Document, document_id)
+        if doc is None:
+            return None
 
-    formatted: list[dict[str, Any]] = []
-    for i, chunk in enumerate(doc_chunks):
-        chunk_text = chunk.text
-        chunk_text = chunk_text.replace("\x00 ", "-")
-
-        headings = getattr(chunk.meta, "headings", []) or []
-        heading_ctx = " > ".join(h if isinstance(h, str) else h.text for h in headings) if headings else "Root"
-        pages = list(getattr(chunk.meta, "page_numbers", [])) or [1]
-
-        enriched = f"[章节上下文: {heading_ctx}]\n{chunk_text}"
-
-        formatted.append(
-            {
-                "enriched_text": enriched,
-                "raw_text": chunk_text,
-                "metadata": {
-                    "source_file": os.path.basename(file_path),
-                    "chunk_id": i,
-                    "heading_context": heading_ctx,
-                    "page_numbers": pages,
-                },
-            }
+        return DocumentDetail(
+            id=doc.id,  # type: ignore[arg-type]
+            file_name=doc.file_name,
+            file_path=doc.file_path,
+            file_size=doc.file_size,
+            file_ext=doc.file_ext,
+            status=doc.status,
+            chunk_count=doc.chunk_count,
+            error_message=doc.error_message,
+            retry_count=doc.retry_count,
+            created_at=doc.created_at,
+            parse_started_at=doc.parse_started_at,
+            parse_completed_at=doc.parse_completed_at,
+            updated_at=doc.updated_at,
         )
 
-    return formatted
+
+async def delete_document_by_id(document_id: int) -> tuple[int, str]:
+    """
+    删除文档及其关联切片，同时清理磁盘源文件
+
+    返回 (删除切片数量, 文件名)
+    """
+    async with AsyncSessionLocal() as db:
+        doc = await db.get(Document, document_id)
+        if doc is None:
+            return 0, ""
+
+        file_name = doc.file_name
+        file_path = doc.file_path
+
+        # 删除关联切片
+        chunk_stmt = delete(DocumentChunk).where(DocumentChunk.document_id == document_id)  # type: ignore[arg-type]
+        chunk_result = await db.execute(chunk_stmt)
+        deleted_chunks = chunk_result.rowcount  # type: ignore[attr-defined]
+
+        # 删除文档记录
+        await db.delete(doc)
+        await db.commit()
+
+    # 清理磁盘源文件
+    if file_path and os.path.exists(file_path):
+        os.remove(file_path)
+
+    logger.info("Deleted document %d (%s), %d chunks removed", document_id, file_name, deleted_chunks)
+    return deleted_chunks, file_name

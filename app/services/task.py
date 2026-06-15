@@ -1,15 +1,15 @@
 """文档解析并发控制 — Semaphore 限流 + 重试 + 可取消 + 启动恢复"""
 
 import asyncio
-from datetime import datetime
 
 from sqlalchemy import select
 
 from app.core.database import AsyncSessionLocal
 from app.core.logging import get_logger
 from app.models.document import Document, DocumentStatus
-from app.services.document import process_document
-from app.services.rag import store_chunks
+from app.services.document import get_document, update_document_status
+from app.services.rag_chunk import document_chunk
+from app.services.chunk import insert_chunks
 
 logger = get_logger(__name__)
 
@@ -82,14 +82,7 @@ async def _run_with_semaphore(document_id: int) -> None:
             finally:
                 _active.discard(document_id)
     except asyncio.CancelledError:
-        # 排队中被取消（PENDING）或正在解析被取消（PROCESSING），统一标记
-        async with AsyncSessionLocal() as db:
-            doc = await db.get(Document, document_id)
-            if doc and doc.status in (DocumentStatus.PENDING, DocumentStatus.PROCESSING):
-                doc.status = DocumentStatus.FAILED
-                doc.error_message = "用户取消"
-                doc.updated_at = datetime.now()
-                await db.commit()
+        await update_document_status(document_id, DocumentStatus.FAILED, error_message="用户取消")
         logger.info("Doc#%d cancelled", document_id)
         raise
     except Exception:
@@ -99,31 +92,21 @@ async def _run_with_semaphore(document_id: int) -> None:
 async def _process_one(document_id: int) -> None:
     """单个文档的完整解析管线，含重试"""
     # ---- 1. 读取文档信息 ----
-    async with AsyncSessionLocal() as db:
-        doc = await db.get(Document, document_id)
-        if doc is None:
-            logger.warning("Doc#%d not found in DB, skip", document_id)
-            return
-        file_path = doc.file_path
+    doc = await get_document(document_id)
+    if doc is None:
+        logger.warning("Doc#%d not found in DB, skip", document_id)
+        return
+    file_path = doc.file_path
 
-        doc.status = DocumentStatus.PROCESSING
-        doc.parse_started_at = datetime.now()
-        doc.updated_at = datetime.now()
-        await db.commit()
+    await update_document_status(document_id, DocumentStatus.PROCESSING)
 
     # ---- 2. 解析 + 入库 ----
     try:
-        chunks = await asyncio.to_thread(process_document, file_path)
+        chunks = await asyncio.to_thread(document_chunk, file_path)
 
-        count = 0 if not chunks else await store_chunks(chunks, document_id=document_id)
+        count = 0 if not chunks else await insert_chunks(chunks, document_id=document_id)
 
-        async with AsyncSessionLocal() as db:
-            doc = await db.get(Document, document_id)
-            doc.status = DocumentStatus.COMPLETED
-            doc.chunk_count = count
-            doc.parse_completed_at = datetime.now()
-            doc.updated_at = datetime.now()
-            await db.commit()
+        await update_document_status(document_id, DocumentStatus.COMPLETED, chunk_count=count)
 
         logger.info("Doc#%d completed: %d chunks", document_id, count)
 
@@ -132,32 +115,25 @@ async def _process_one(document_id: int) -> None:
 
     except Exception as exc:
         # ---- 3. 重试 / 彻底失败 ----
-        async with AsyncSessionLocal() as db:
-            doc = await db.get(Document, document_id)
-            retry = (doc.retry_count or 0) + 1
+        doc = await get_document(document_id)
+        retry = (doc.retry_count or 0) + 1 if doc else 1
 
-            if retry <= MAX_RETRIES:
-                delay = RETRY_DELAY_BASE * (2 ** (retry - 1))
-                logger.warning("Doc#%d failed, retry %d/%d in %ds: %s",
-                               document_id, retry, MAX_RETRIES, delay, exc)
+        if retry <= MAX_RETRIES:
+            delay = RETRY_DELAY_BASE * (2 ** (retry - 1))
+            logger.warning("Doc#%d failed, retry %d/%d in %ds: %s",
+                           document_id, retry, MAX_RETRIES, delay, exc)
 
-                doc.status = DocumentStatus.PENDING
-                doc.retry_count = retry
-                doc.error_message = str(exc)[:2000]
-                doc.updated_at = datetime.now()
-                await db.commit()
+            await update_document_status(document_id, DocumentStatus.PENDING,
+                                         error_message=str(exc)[:2000], retry_count=retry)
 
-                await asyncio.sleep(delay)
-                schedule(document_id)
-            else:
-                logger.error("Doc#%d permanently failed after %d retries: %s",
-                             document_id, retry, exc)
+            await asyncio.sleep(delay)
+            schedule(document_id)
+        else:
+            logger.error("Doc#%d permanently failed after %d retries: %s",
+                         document_id, retry, exc)
 
-                doc.status = DocumentStatus.FAILED
-                doc.retry_count = retry
-                doc.error_message = str(exc)[:2000]
-                doc.updated_at = datetime.now()
-                await db.commit()
+            await update_document_status(document_id, DocumentStatus.FAILED,
+                                         error_message=str(exc)[:2000], retry_count=retry)
 
 
 # ========== 启动恢复 ==========

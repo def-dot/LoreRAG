@@ -44,7 +44,7 @@ async function handleDelete(row: DocumentItem) {
     type: 'warning',
   })
   try {
-    await deleteDocument(row.file_name)
+    await deleteDocument(row.id)
     ElMessage.success('删除成功')
     await fetchDocuments()
   } catch {
