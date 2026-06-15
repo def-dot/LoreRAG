@@ -3,6 +3,9 @@ import request from './request'
 export interface DocumentItem {
   id: number
   file_name: string
+  file_size: number | null
+  status: string
+  error_message: string | null
   chunk_count: number
   page_numbers: number[]
   created_at: string | null
@@ -40,6 +43,36 @@ export function getDocuments() {
 export function deleteDocument(documentId: number) {
   return request.delete<{ code: number; msg: string; data: { deleted_chunks: number; file_name: string } }>(
     `/document/${documentId}`,
+  )
+}
+
+// 取消解析
+export function cancelDocument(documentId: number) {
+  return request.post(`/document/${documentId}/cancel`)
+}
+
+// 重试解析
+export function retryDocument(documentId: number) {
+  return request.post(`/document/${documentId}/retry`)
+}
+
+// 下载原始文件
+export function getDownloadUrl(documentId: number): string {
+  return `/api/v1/document/${documentId}/download`
+}
+
+// 文档切片
+export interface ChunkItem {
+  id: number
+  document_id: number
+  page_numbers: number[]
+  heading_context: string
+  raw_content: string
+}
+
+export function getDocumentChunks(documentId: number) {
+  return request.get<{ code: number; msg: string; data: { items: ChunkItem[]; total: number } }>(
+    `/document/${documentId}/chunks`,
   )
 }
 

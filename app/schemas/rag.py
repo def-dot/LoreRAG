@@ -49,6 +49,7 @@ class DocumentListItem(BaseModel):
     status: str = Field(description="处理状态")
     chunk_count: int = Field(default=0, description="切片数量")
     retry_count: int = Field(default=0, description="重试次数")
+    error_message: str | None = Field(default=None, description="错误信息")
     created_at: datetime | None = Field(default=None, description="上传时间")
     parse_started_at: datetime | None = Field(default=None, description="开始解析时间")
     parse_completed_at: datetime | None = Field(default=None, description="解析完成时间")
@@ -78,6 +79,23 @@ class DocumentDetail(BaseModel):
     parse_started_at: datetime | None = Field(default=None, description="开始解析时间")
     parse_completed_at: datetime | None = Field(default=None, description="解析完成时间")
     updated_at: datetime | None = Field(default=None, description="更新时间")
+
+
+class ChunkItem(BaseModel):
+    """单条切片信息"""
+
+    id: int = Field(description="切片 ID")
+    document_id: int = Field(description="所属文档 ID")
+    page_numbers: list[int] = Field(default=[], description="页码")
+    heading_context: str = Field(default="", description="章节上下文")
+    raw_content: str = Field(default="", description="原始内容（Markdown / LaTeX / 图片描述）")
+
+
+class ChunkListResponse(BaseModel):
+    """切片列表响应"""
+
+    items: list[ChunkItem] = Field(description="切片列表")
+    total: int = Field(description="切片总数")
 
 
 class DeleteResponse(BaseModel):

@@ -3,11 +3,13 @@
 import json
 from typing import Any
 
-from sqlalchemy import text
+from sqlalchemy import text, select
 
 from app.core.database import AsyncSessionLocal
 from app.core.logging import get_logger
 from app.services.embedding import encode_hybrid_batch
+from app.schemas.rag import ChunkItem
+from app.models.document import Document, DocumentChunk
 
 logger = get_logger(__name__)
 
@@ -15,6 +17,28 @@ logger = get_logger(__name__)
 def _vector_to_str(vec: list[float]) -> str:
     """将向量列表转换为 PostgreSQL vector 字面量"""
     return "[" + ",".join(str(v) for v in vec) + "]"
+
+
+async def list_chunks(document_id: int) -> list[ChunkItem]:
+    """列出文档的所有切片（不含向量数据）"""
+    async with AsyncSessionLocal() as db:
+        stmt = (
+            select(DocumentChunk)
+            .where(DocumentChunk.document_id == document_id)
+            .order_by(DocumentChunk.id)
+        )
+        rows = (await db.execute(stmt)).scalars().all()
+
+        return [
+            ChunkItem(
+                id=chunk.id,
+                document_id=chunk.document_id,
+                page_numbers=chunk.page_numbers or [],
+                heading_context=chunk.heading_context or "",
+                raw_content=chunk.raw_content or "",
+            )
+            for chunk in rows
+        ]
 
 
 async def insert_chunks(chunks: list[dict[str, Any]], document_id: int) -> int:

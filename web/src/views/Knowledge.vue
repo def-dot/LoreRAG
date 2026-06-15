@@ -1,13 +1,45 @@
 <script setup lang="ts">
-import { ref, onMounted } from 'vue'
+import { ref, computed, onMounted, onUnmounted } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
-import { UploadFilled, Delete, Refresh, Document } from '@element-plus/icons-vue'
+import { UploadFilled, Delete, Refresh, RefreshRight, VideoPause, Document, Download } from '@element-plus/icons-vue'
 import type { UploadFile } from 'element-plus'
-import { uploadDocument, getDocuments, deleteDocument, type DocumentItem } from '../api/rag'
+import { uploadDocument, getDocuments, deleteDocument, cancelDocument, retryDocument, getDocumentChunks, getDownloadUrl, type DocumentItem, type ChunkItem } from '../api/rag'
 
 const documents = ref<DocumentItem[]>([])
 const loading = ref(false)
 const uploading = ref(false)
+let pollTimer: ReturnType<typeof setInterval> | null = null
+
+// --- chunk drawer ---
+const chunkDrawer = ref(false)
+const chunkLoading = ref(false)
+const chunks = ref<ChunkItem[]>([])
+const chunkDocName = ref('')
+
+async function openChunks(row: DocumentItem) {
+  chunkDocName.value = row.file_name
+  chunkDrawer.value = true
+  chunkLoading.value = true
+  try {
+    const res = await getDocumentChunks(row.id)
+    chunks.value = res.data.items
+  } catch {
+    chunks.value = []
+  } finally {
+    chunkLoading.value = false
+  }
+}
+
+const hasPending = computed(() =>
+  documents.value.some(d => d.status === 'pending' || d.status === 'processing')
+)
+
+const statusMap: Record<string, { label: string; type: '' | 'success' | 'warning' | 'danger' | 'info' }> = {
+  pending:    { label: '排队中', type: 'info' },
+  processing: { label: '解析中', type: 'warning' },
+  completed:  { label: '已完成', type: 'success' },
+  failed:     { label: '失败',   type: 'danger' },
+}
 
 async function fetchDocuments() {
   loading.value = true
@@ -39,6 +71,26 @@ async function handleUpload(uploadFile: UploadFile) {
   }
 }
 
+async function handleCancel(row: DocumentItem) {
+  try {
+    await cancelDocument(row.id)
+    ElMessage.success('已取消')
+    await fetchDocuments()
+  } catch {
+    // interceptor handles error message
+  }
+}
+
+async function handleRetry(row: DocumentItem) {
+  try {
+    await retryDocument(row.id)
+    ElMessage.success('已重新加入队列')
+    await fetchDocuments()
+  } catch {
+    // interceptor handles error message
+  }
+}
+
 async function handleDelete(row: DocumentItem) {
   await ElMessageBox.confirm(`确定删除文档「${row.file_name}」及其所有切片？`, '删除确认', {
     type: 'warning',
@@ -52,6 +104,13 @@ async function handleDelete(row: DocumentItem) {
   }
 }
 
+function formatFileSize(bytes: number | null): string {
+  if (!bytes) return '-'
+  if (bytes < 1024) return `${bytes} B`
+  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`
+  return `${(bytes / (1024 * 1024)).toFixed(1)} MB`
+}
+
 function formatTime(value: string | null): string {
   if (!value) return ''
   const d = new Date(value)
@@ -60,7 +119,24 @@ function formatTime(value: string | null): string {
   return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}`
 }
 
-onMounted(fetchDocuments)
+function startPolling() {
+  pollTimer = setInterval(async () => {
+    if (!hasPending.value) return
+    try {
+      const res = await getDocuments()
+      documents.value = res.data.items
+    } catch { /* silent */ }
+  }, 3000)
+}
+
+onMounted(async () => {
+  await fetchDocuments()
+  startPolling()
+})
+
+onUnmounted(() => {
+  if (pollTimer) clearInterval(pollTimer)
+})
 </script>
 
 <template>
@@ -101,7 +177,7 @@ onMounted(fetchDocuments)
         </div>
       </template>
 
-      <el-table :data="documents" v-loading="loading" stripe empty-text="暂无文档，请上传">
+      <el-table :data="documents" v-loading="loading" stripe empty-text="暂无文档，请上传" @row-click="openChunks">
         <el-table-column label="文件名" min-width="220">
           <template #default="{ row }">
             <div class="file-name">
@@ -110,42 +186,105 @@ onMounted(fetchDocuments)
             </div>
           </template>
         </el-table-column>
-        <el-table-column prop="chunk_count" label="切片数" width="90" align="center" />
-        <el-table-column label="页码范围" width="160">
+        <el-table-column label="大小" width="90" align="right">
           <template #default="{ row }">
-            <template v-if="row.page_numbers?.length">
-              {{ row.page_numbers[0] }} - {{ row.page_numbers[row.page_numbers.length - 1] }}
-            </template>
-            <span v-else class="text-muted">-</span>
+            <span class="size-cell">{{ formatFileSize(row.file_size) }}</span>
           </template>
         </el-table-column>
+        <el-table-column label="状态" width="100" align="center">
+          <template #default="{ row }">
+            <el-tooltip
+              v-if="row.status === 'failed' && row.error_message"
+              :content="row.error_message"
+              placement="top"
+              :show-after="200"
+            >
+              <el-tag type="danger" size="small" effect="light">失败</el-tag>
+            </el-tooltip>
+            <el-tag v-else :type="statusMap[row.status]?.type ?? 'info'" size="small" effect="light">
+              {{ statusMap[row.status]?.label ?? row.status }}
+            </el-tag>
+          </template>
+        </el-table-column>
+        <el-table-column prop="chunk_count" label="切片数" width="90" align="center" />
+
         <el-table-column label="上传时间" width="150">
           <template #default="{ row }">
             <span v-if="row.created_at" class="time-cell">{{ formatTime(row.created_at) }}</span>
             <span v-else class="text-muted">-</span>
           </template>
         </el-table-column>
-        <el-table-column label="开始解析" width="150">
+        <el-table-column label="操作" width="160" align="center">
           <template #default="{ row }">
-            <span v-if="row.parse_started_at" class="time-cell">{{ formatTime(row.parse_started_at) }}</span>
-            <span v-else class="text-muted">-</span>
-          </template>
-        </el-table-column>
-        <el-table-column label="解析完成" width="150">
-          <template #default="{ row }">
-            <span v-if="row.parse_completed_at" class="time-cell">{{ formatTime(row.parse_completed_at) }}</span>
-            <span v-else class="text-muted">-</span>
-          </template>
-        </el-table-column>
-        <el-table-column label="操作" width="90" align="center">
-          <template #default="{ row }">
-            <el-button :icon="Delete" type="danger" text size="small" @click="handleDelete(row)"
-              >删除</el-button
+            <template v-if="row.status === 'pending' || row.status === 'processing'">
+              <el-button :icon="VideoPause" type="warning" text size="small" @click.stop="handleCancel(row)">
+                取消
+              </el-button>
+            </template>
+            <template v-if="row.status === 'failed'">
+              <el-button :icon="RefreshRight" type="primary" text size="small" @click.stop="handleRetry(row)">
+                重试
+              </el-button>
+            </template>
+            <a
+              v-if="row.status === 'completed'"
+              :href="getDownloadUrl(row.id)"
+              class="download-link"
+              @click.stop
             >
+              <el-button :icon="Download" type="primary" text size="small">
+                下载
+              </el-button>
+            </a>
+            <el-button
+              :icon="Delete"
+              type="danger"
+              text
+              size="small"
+              :disabled="row.status === 'pending' || row.status === 'processing'"
+              @click.stop="handleDelete(row)"
+            >
+              删除
+            </el-button>
           </template>
         </el-table-column>
       </el-table>
     </el-card>
+
+    <!-- 切片详情抽屉 -->
+    <el-drawer
+      v-model="chunkDrawer"
+      :title="`切片详情 — ${chunkDocName}`"
+      size="560px"
+      direction="rtl"
+    >
+      <div v-loading="chunkLoading" class="chunk-list">
+        <template v-if="!chunkLoading && chunks.length === 0">
+          <div class="chunk-empty">该文档暂无切片数据</div>
+        </template>
+        <div
+          v-for="(chunk, idx) in chunks"
+          :key="chunk.id"
+          class="chunk-card"
+        >
+          <div class="chunk-header">
+            <span class="chunk-index">#{{ idx + 1 }}</span>
+            <el-tag
+              v-if="chunk.page_numbers.length"
+              size="small"
+              effect="plain"
+              round
+            >
+              第 {{ chunk.page_numbers.join(', ') }} 页
+            </el-tag>
+            <span class="chunk-heading">{{ chunk.heading_context }}</span>
+          </div>
+          <div class="chunk-body">
+            <pre class="chunk-text">{{ chunk.raw_content }}</pre>
+          </div>
+        </div>
+      </div>
+    </el-drawer>
   </div>
 </template>
 
@@ -290,11 +429,21 @@ onMounted(fetchDocuments)
   white-space: nowrap;
 }
 
+.download-link {
+  text-decoration: none;
+  color: inherit;
+}
+
 .time-cell {
   font-variant-numeric: tabular-nums;
   font-size: 12.5px;
   color: var(--ink-3);
   white-space: nowrap;
+}
+
+.size-cell {
+  font-size: 12.5px;
+  color: var(--ink-3);
 }
 
 .text-muted {
@@ -312,5 +461,72 @@ onMounted(fetchDocuments)
 
 .table-card :deep(.el-table td.el-table__cell) {
   padding: 11px 0;
+}
+
+.table-card :deep(.el-table__body tr) {
+  cursor: pointer;
+}
+
+/* ---------------- Chunk drawer ---------------- */
+.chunk-list {
+  min-height: 200px;
+}
+
+.chunk-empty {
+  text-align: center;
+  color: var(--ink-3);
+  padding: 48px 0;
+  font-size: 14px;
+}
+
+.chunk-card {
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 16px;
+  margin-bottom: 12px;
+  transition: border-color 0.2s ease;
+}
+
+.chunk-card:hover {
+  border-color: var(--border-strong);
+}
+
+.chunk-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 10px;
+  flex-wrap: wrap;
+}
+
+.chunk-index {
+  font-size: 12px;
+  font-weight: 700;
+  color: var(--ink-4);
+  letter-spacing: 0.02em;
+  min-width: 24px;
+}
+
+.chunk-heading {
+  font-size: 12.5px;
+  font-weight: 500;
+  color: var(--ink-3);
+}
+
+.chunk-body {
+  background: var(--surface-2);
+  border-radius: 6px;
+  padding: 12px 14px;
+  overflow-x: auto;
+}
+
+.chunk-text {
+  margin: 0;
+  font-family: var(--font-sans);
+  font-size: 13px;
+  line-height: 1.7;
+  color: var(--ink-2);
+  white-space: pre-wrap;
+  word-break: break-word;
 }
 </style>
