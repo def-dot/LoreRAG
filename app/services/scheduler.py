@@ -20,23 +20,26 @@ logger = get_logger(__name__)
 MAX_CONCURRENT = 2       # 同时解析数（跨 worker 全局生效）
 MAX_RETRIES = 3           # 最大重试次数
 RETRY_DELAY_BASE = 5      # 退避基数（秒），指数递增: 5 → 10 → 20
-SLOT_TTL = 1200            # 槽位锁 TTL（秒），超时自动释放防死锁
 
 # ---- 状态 ----
 _tasks: dict[int, asyncio.Task] = {}  # doc_id → task（所有未完成的）
 _active: set[int] = set()             # 正在解析的文档
 
 
-_SLOT_KEYS = [f"parse:slot:{i}" for i in range(1, MAX_CONCURRENT + 1)]
+_SLOT_KEY = "parse:slots"
 
 # 共享连接池（lifespan 启动时调用 _init_redis）
 _pool: redis.ConnectionPool | None = None
 
 
 async def _init_redis() -> None:
-    """初始化 Redis 连接池"""
+    """初始化 Redis 连接池并预填信号量令牌（多 worker 安全：SET NX 保证只填一次）"""
     global _pool
-    _pool = redis.ConnectionPool.from_url(settings.REDIS_URL, max_connections=MAX_CONCURRENT + 4)
+    _pool = redis.ConnectionPool.from_url(settings.REDIS_URL, max_connections=50)
+    r = redis.Redis(connection_pool=_pool)
+    if await r.set("parse:slots:init", "1", nx=True, ex=10):
+        await r.delete(_SLOT_KEY)
+        await r.rpush(_SLOT_KEY, *[str(i) for i in range(1, MAX_CONCURRENT + 1)])
 
 
 def status() -> dict:
@@ -86,13 +89,11 @@ async def _run(document_id: int) -> None:
     r = redis.Redis(connection_pool=_pool)
     slot: str | None = None
     try:
+        # BLPOP 阻塞等待可用槽位，每 30s 超时检查取消信号
         while slot is None:
-            for key in _SLOT_KEYS:
-                if await r.set(key, str(document_id), nx=True, ex=SLOT_TTL):
-                    slot = key
-                    break
-            if slot is None:
-                await asyncio.sleep(1)
+            result = await r.blpop(_SLOT_KEY, timeout=30)
+            if result is not None:
+                _, slot = result  # (key, value)
 
         _active.add(document_id)
         try:
@@ -101,7 +102,7 @@ async def _run(document_id: int) -> None:
             _active.discard(document_id)
             if slot:
                 try:
-                    await r.delete(slot)
+                    await r.rpush(_SLOT_KEY, slot)
                 except redis.RedisError:
                     pass
     except asyncio.CancelledError:
@@ -174,7 +175,9 @@ async def recover_stuck() -> int:
     """
     扫描 DB 中卡在 PENDING / PROCESSING 的文档，重新调度。
     在 lifespan 启动时调用，应对服务重启丢失内存状态。
+    SET NX 防止多 worker 重复调度同一文档。
     """
+    r = redis.Redis(connection_pool=_pool)
     async with AsyncSessionLocal() as db:
         result = await db.execute(
             select(Document).where(
@@ -183,9 +186,12 @@ async def recover_stuck() -> int:
         )
         stuck = result.scalars().all()
 
+    scheduled = 0
     for doc in stuck:
-        schedule(doc.id)
+        if await r.set(f"recover:lock:{doc.id}", "1", nx=True, ex=60):
+            schedule(doc.id)
+            scheduled += 1
 
-    if stuck:
-        logger.info("Recovered %d stuck document(s), re-scheduled", len(stuck))
-    return len(stuck)
+    if scheduled:
+        logger.info("Recovered %d stuck document(s), re-scheduled (total stuck=%d)", scheduled, len(stuck))
+    return scheduled
