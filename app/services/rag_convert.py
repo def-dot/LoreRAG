@@ -17,6 +17,8 @@ def _get_converter():
     opts = PdfPipelineOptions()
     opts.document_timeout = 300.0
 
+    opts.queue_max_size = 5 
+
     # OCR
     opts.do_ocr = True
     opts.ocr_options = RapidOcrOptions()
@@ -27,10 +29,10 @@ def _get_converter():
     opts.do_code_enrichment = True
 
     # 图片生成
-    opts.generate_page_images = True
-    opts.generate_picture_images = True
-    opts.generate_table_images = True
-    opts.images_scale = 1.0
+    # opts.generate_page_images = True
+    # opts.generate_picture_images = True
+    # opts.generate_table_images = True
+    # opts.images_scale = 1.0
 
     return DocumentConverter(
         format_options={
