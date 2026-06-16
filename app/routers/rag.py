@@ -13,7 +13,7 @@ from app.schemas.rag import (
     SearchResponse,
 )
 from app.services import rag_query
-from app.services.scheduler import cancel
+from app.services.scheduler import cancel_and_await
 
 logger = get_logger(__name__)
 router = APIRouter(prefix="/rag", tags=["RAG 知识库"])
@@ -46,7 +46,7 @@ async def cancel_parse(
     db: SessionDep,
 ) -> dict[str, Any]:
     """取消正在排队或解析中的文档"""
-    ok = cancel(document_id)
+    ok = await cancel_and_await(document_id)
     if not ok:
         raise HTTPException(status_code=404, detail=f"文档不在解析队列中: {document_id}")
     return {"document_id": document_id, "cancelled": True}

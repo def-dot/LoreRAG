@@ -16,7 +16,7 @@ from app.schemas.rag import (
 from app.models.document import DocumentStatus
 from app.services import document, chunk
 from app.core.config import settings
-from app.services.scheduler import cancel, schedule
+from app.services.scheduler import cancel_and_await, schedule
 
 logger = get_logger(__name__)
 router = APIRouter(prefix="/document", tags=["文档管理"])
@@ -129,10 +129,9 @@ async def get_document(
 @router.post("/{document_id}/cancel")
 async def cancel_document(document_id: int) -> dict[str, Any]:
     """取消正在排队或解析中的文档"""
-    ok = cancel(document_id)
+    ok = await cancel_and_await(document_id)
     if not ok:
         raise HTTPException(status_code=404, detail=f"文档不在解析队列中: {document_id}")
-    await document.update_document_status(document_id, DocumentStatus.FAILED, error_message="用户取消")
     return {"document_id": document_id, "cancelled": True}
 
 
@@ -158,7 +157,6 @@ async def delete_document(
     if doc is None:
         raise HTTPException(status_code=404, detail=f"文档不存在: {document_id}")
     if doc.status in (DocumentStatus.PENDING, DocumentStatus.PROCESSING):
-        cancel(document_id)
-
+        await cancel_and_await(document_id)
     deleted_chunks, file_name = await document.delete_document_by_id(document_id)
     return DeleteResponse(deleted_chunks=deleted_chunks, file_name=file_name)

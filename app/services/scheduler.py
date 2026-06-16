@@ -1,7 +1,10 @@
 """文档解析并发控制 — Redis 分布式信号量 + 重试 + 可取消 + 启动恢复"""
 
 import asyncio
+import json
 import os
+import sys
+from pathlib import Path
 
 import redis.asyncio as redis
 from sqlalchemy import select
@@ -11,7 +14,6 @@ from app.core.database import AsyncSessionLocal
 from app.core.logging import get_logger
 from app.models.document import Document, DocumentStatus
 from app.services.document import get_document, update_document_status
-from app.services.rag_chunk import document_chunk
 from app.services.chunk import insert_chunks
 
 logger = get_logger(__name__)
@@ -24,6 +26,10 @@ RETRY_DELAY_BASE = 5      # 退避基数（秒），指数递增: 5 → 10 → 2
 # ---- 状态 ----
 _tasks: dict[int, asyncio.Task] = {}  # doc_id → task（所有未完成的）
 _active: set[int] = set()             # 正在解析的文档
+_parsing: dict[int, asyncio.subprocess.Process] = {}  # doc_id → 正在运行的解析子进程
+
+# worker 脚本路径
+_WORKER_SCRIPT = str(Path(__file__).resolve().parent / "_chunk_worker.py")
 
 
 _SLOT_KEY = "parse:slots"
@@ -63,16 +69,19 @@ def schedule(document_id: int) -> None:
         name=f"parse-doc-{document_id}",
     )
     _tasks[document_id] = task
-    task.add_done_callback(
-        lambda _t, did=document_id, t=task: _tasks.pop(did, None) if _tasks.get(did) is t else None
-    )
+
+    def _on_done(_finished: asyncio.Task) -> None:
+        if _tasks.get(document_id) is task:
+            _tasks.pop(document_id, None)
+
+    task.add_done_callback(_on_done)
     state = status()
     logger.info("Doc#%d scheduled — waiting=%d, active=%d",
                 document_id, state["waiting_count"], state["active_count"])
 
 
 def cancel(document_id: int) -> bool:
-    """取消指定文档的解析任务"""
+    """取消指定文档的解析任务（不等待任务结束）"""
     task = _tasks.get(document_id)
     if task is None:
         return False
@@ -81,9 +90,22 @@ def cancel(document_id: int) -> bool:
     return True
 
 
+async def cancel_and_await(document_id: int) -> bool:
+    """取消指定文档的解析任务并等待其完成"""
+    task = _tasks.get(document_id)
+    if task is None:
+        return False
+    task.cancel()
+    logger.info("Doc#%d cancel requested (awaiting completion)", document_id)
+    try:
+        await task
+    except asyncio.CancelledError:
+        pass
+    logger.info("Doc#%d task finished after cancel", document_id)
+    return True
+
+
 # ========== 核心 ==========
-
-
 async def _run(document_id: int) -> None:
     """Redis 分布式信号量限流 → 解析 → 释放"""
     r = redis.Redis(connection_pool=_pool)
@@ -108,9 +130,8 @@ async def _run(document_id: int) -> None:
     except asyncio.CancelledError:
         await update_document_status(document_id, DocumentStatus.FAILED, error_message="用户取消")
         logger.info("Doc#%d cancelled", document_id)
-        raise
     except Exception as exc:
-        # ---- 3. 重试 / 彻底失败 ----
+        # ---- 重试 / 彻底失败 ----
         doc = await get_document(document_id)
         retry = (doc.retry_count or 0) + 1 if doc else 1
 
@@ -133,7 +154,7 @@ async def _run(document_id: int) -> None:
 
 
 async def _process_one(document_id: int) -> None:
-    """单个文档的完整解析管线，含重试和详细错误处理"""
+    """单个文档的完整解析管线（子进程解析，可被 kill 强杀）"""
     # ---- 1. 读取文档信息 ----
     doc = await get_document(document_id)
     if doc is None:
@@ -150,10 +171,28 @@ async def _process_one(document_id: int) -> None:
 
     await update_document_status(document_id, DocumentStatus.PROCESSING)
 
-    # ---- 2. 解析 + 入库 ----
-    logger.info("Doc#%d: starting parsing", document_id)
-    chunks = await asyncio.to_thread(document_chunk, file_path)
+    # ---- 2. 子进程解析 ----
+    logger.info("Doc#%d: starting parsing (subprocess)", document_id)
+    chunks: list[dict] = []
+    proc = await asyncio.create_subprocess_exec(
+        sys.executable, _WORKER_SCRIPT, file_path,
+        stdout=asyncio.subprocess.PIPE,
+        stderr=asyncio.subprocess.PIPE,
+    )
+    _parsing[document_id] = proc
+    try:
+        stdout, stderr = await proc.communicate()
+        if proc.returncode != 0:
+            raise RuntimeError(f"解析失败: {stderr.decode(errors='replace')[:2000]}")
 
+        chunks = json.loads(stdout.decode())
+    except asyncio.CancelledError:
+        _kill_process(document_id)
+        raise
+    finally:
+        _parsing.pop(document_id, None)
+
+    # ---- 3. 入库 ----
     inserted_count = 0
     if chunks:
         logger.info("Doc#%d: parsed %d chunks, inserting into database", document_id, len(chunks))
@@ -167,6 +206,18 @@ async def _process_one(document_id: int) -> None:
 
     await update_document_status(document_id, DocumentStatus.COMPLETED, chunk_count=inserted_count)
     logger.info("Doc#%d completed: %d chunks stored", document_id, inserted_count)
+
+
+def _kill_process(document_id: int) -> None:
+    """强行终止指定文档的解析子进程（cancel 回调）"""
+    proc = _parsing.pop(document_id, None)
+    if proc is None or proc.returncode is not None:
+        return
+    try:
+        proc.kill()
+    except ProcessLookupError:
+        pass
+    logger.info("Doc#%d parse subprocess killed", document_id)
 
 # ========== 启动恢复 ==========
 
