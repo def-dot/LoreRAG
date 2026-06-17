@@ -2,9 +2,15 @@
 
 import os
 from functools import lru_cache
+from pathlib import Path
 from typing import Any
 
+from docling_core.types.doc import DoclingDocument  # type: ignore[attr-defined]
+
 from app.services.rag_convert import document_convert
+from app.core.logging import get_logger
+
+logger = get_logger(__name__)
 
 
 @lru_cache(maxsize=1)
@@ -20,13 +26,21 @@ def _get_chunker():
     return HybridChunker(tokenizer=tokenizer)
 
 
-def document_chunk(file_path: str) -> list[dict[str, Any]]:
-    """将文档切片为带元数据的文本块"""
-    doc = document_convert(file_path)
+def document_chunk(file_path: str, *, doc: DoclingDocument = None) -> list[dict[str, Any]]:
+    """将文档切片为带元数据的文本块。可传入已转换的 doc 避免重复解析"""
+    if doc is None:
+        logger.info("start converting......")
+        doc = document_convert(file_path)
+
+    debug_dir = Path("debug")
+    debug_dir.mkdir(exist_ok=True)
+    doc.save_as_json(debug_dir / f"{Path(file_path).stem}.json")
+    
+    logger.info("start chunking......")
     doc_chunks = list(_get_chunker().chunk(doc))
 
+    logger.info("start formating......")
     source_file = os.path.basename(file_path)
-
     formatted: list[dict[str, Any]] = []
     for i, chunk in enumerate(doc_chunks):
         text = chunk.text.replace("\x00 ", "-")
@@ -51,5 +65,5 @@ def document_chunk(file_path: str) -> list[dict[str, Any]]:
                 },
             }
         )
-
+    logger.info("document chunk successed")
     return formatted

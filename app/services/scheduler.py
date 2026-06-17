@@ -174,6 +174,7 @@ async def _process_one(document_id: int) -> None:
     # ---- 2. 子进程解析 ----
     logger.info("Doc#%d: starting parsing (subprocess)", document_id)
     chunks: list[dict] = []
+
     proc = await asyncio.create_subprocess_exec(
         sys.executable, _WORKER_SCRIPT, file_path,
         stdout=asyncio.subprocess.PIPE,
@@ -183,7 +184,8 @@ async def _process_one(document_id: int) -> None:
     try:
         stdout, stderr = await proc.communicate()
         if proc.returncode != 0:
-            raise RuntimeError(f"解析失败: {stderr.decode(errors='replace')[:2000]}")
+            err = stderr.decode(errors="replace")[-2000:]
+            raise RuntimeError(f"解析失败: {err}")
 
         chunks = json.loads(stdout.decode())
     except asyncio.CancelledError:
