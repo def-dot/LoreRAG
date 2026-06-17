@@ -1,4 +1,4 @@
-"""Docling PDF 文档转换器（单例复用）"""
+"""Docling PDF 文档转换器"""
 
 from docling_core.types.doc import DoclingDocument  # type: ignore[attr-defined]
 
@@ -17,7 +17,7 @@ def _get_converter():
     opts = PdfPipelineOptions()
     opts.document_timeout = 300.0
 
-    opts.queue_max_size = 5 
+    opts.queue_max_size = 3  # 默认100，会触发docling-parse bad_alloc oom
 
     # OCR
     opts.do_ocr = True
