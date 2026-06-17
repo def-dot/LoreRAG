@@ -160,3 +160,10 @@ async def delete_document(
         await cancel_and_await(document_id)
     deleted_chunks, file_name = await document.delete_document_by_id(document_id)
     return DeleteResponse(deleted_chunks=deleted_chunks, file_name=file_name)
+
+
+@router.get("/{document_id}/pages")
+async def get_document_pages(document_id: int) -> dict[str, Any]:
+    """获取文档每页的解析结果"""
+    pages = await document.get_document_pages(document_id)
+    return {"pages": pages, "total": len(pages)}

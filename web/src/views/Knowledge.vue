@@ -1,9 +1,12 @@
 <script setup lang="ts">
-import { ref, computed, onMounted, onUnmounted } from 'vue'
+import { ref, computed, onMounted, onUnmounted, nextTick } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
-import { UploadFilled, Delete, Refresh, RefreshRight, VideoPause, Document, Download } from '@element-plus/icons-vue'
+import { UploadFilled, Delete, Refresh, RefreshRight, VideoPause, Document, Download, View } from '@element-plus/icons-vue'
 import type { UploadFile } from 'element-plus'
-import { uploadDocument, getDocuments, deleteDocument, cancelDocument, retryDocument, getDocumentChunks, getDownloadUrl, type DocumentItem, type ChunkItem } from '../api/rag'
+import MarkdownIt from 'markdown-it'
+import { uploadDocument, getDocuments, deleteDocument, cancelDocument, retryDocument, getDocumentChunks, getDownloadUrl, getDocumentPages, type DocumentItem, type ChunkItem, type PageData } from '../api/rag'
+
+const md = new MarkdownIt({ html: false, breaks: true, linkify: true })
 
 const documents = ref<DocumentItem[]>([])
 const loading = ref(false)
@@ -30,6 +33,50 @@ async function openChunks(row: DocumentItem) {
     chunkLoading.value = false
   }
 }
+
+// --- pages dialog ---
+const pagesDialog = ref(false)
+const pagesLoading = ref(false)
+const pages = ref<PageData[]>([])
+const currentPage = ref(0)
+const pagesDocName = ref('')
+const pageContent = ref<HTMLElement>()
+
+function renderMarkdown(text: string): string {
+  return md.render(text)
+}
+
+async function openPages(row: DocumentItem) {
+  pagesDocName.value = row.file_name
+  pagesDialog.value = true
+  pagesLoading.value = true
+  currentPage.value = 0
+  try {
+    const res = await getDocumentPages(row.id)
+    pages.value = res.data.pages
+  } catch {
+    pages.value = []
+  } finally {
+    pagesLoading.value = false
+  }
+}
+
+function selectPage(idx: number) {
+  currentPage.value = idx
+  nextTick(() => {
+    pageContent.value?.scrollTo({ top: 0, behavior: 'smooth' })
+  })
+}
+
+function prevPage() {
+  if (currentPage.value > 0) selectPage(currentPage.value - 1)
+}
+
+function nextPage() {
+  if (currentPage.value < pages.value.length - 1) selectPage(currentPage.value + 1)
+}
+
+const currentPageData = computed(() => pages.value[currentPage.value] ?? null)
 
 const hasPending = computed(() =>
   documents.value.some(d => d.status === 'pending' || d.status === 'processing')
@@ -127,7 +174,7 @@ function startPolling() {
       const res = await getDocuments()
       documents.value = res.data.items
     } catch { /* silent */ }
-  }, 3000)
+  }, 10000)
 }
 
 onMounted(async () => {
@@ -215,7 +262,7 @@ onUnmounted(() => {
             <span v-else class="text-muted">-</span>
           </template>
         </el-table-column>
-        <el-table-column label="操作" width="140" align="center">
+        <el-table-column label="操作" width="170" align="center">
           <template #default="{ row }">
             <span class="action-slot">
               <template v-if="row.status === 'pending' || row.status === 'processing'">
@@ -226,6 +273,11 @@ onUnmounted(() => {
               <template v-else-if="row.status === 'failed'">
                 <el-tooltip content="重试">
                   <el-button :icon="RefreshRight" type="primary" text size="small" @click.stop="handleRetry(row)" />
+                </el-tooltip>
+              </template>
+              <template v-else-if="row.status === 'completed'">
+                <el-tooltip content="解析结果">
+                  <el-button :icon="View" type="primary" text size="small" @click.stop="openPages(row)" />
                 </el-tooltip>
               </template>
             </span>
@@ -280,6 +332,67 @@ onUnmounted(() => {
         </div>
       </div>
     </el-drawer>
+
+    <!-- 解析结果弹窗 -->
+    <el-dialog
+      v-model="pagesDialog"
+      :title="`解析结果 — ${pagesDocName}`"
+      width="900px"
+      top="3vh"
+      :close-on-click-modal="false"
+      destroy-on-close
+    >
+      <div v-loading="pagesLoading" class="pages-dialog">
+        <template v-if="!pagesLoading && pages.length === 0">
+          <div class="pages-empty">暂无解析结果数据</div>
+        </template>
+        <template v-else-if="!pagesLoading && currentPageData">
+          <div class="pages-layout">
+            <!-- 左侧页码导航 -->
+            <div class="pages-nav">
+              <div
+                v-for="(p, idx) in pages"
+                :key="p.page_no"
+                class="page-thumb"
+                :class="{ active: idx === currentPage }"
+                @click="selectPage(idx)"
+              >
+                <span class="page-no">P{{ p.page_no }}</span>
+                <span class="page-meta">
+                  <template v-if="p.table_count">{{ p.table_count }} 表</template>
+                  <template v-if="p.picture_count">{{ p.picture_count }} 图</template>
+                </span>
+              </div>
+            </div>
+
+            <!-- 右侧内容 -->
+            <div class="pages-content" ref="pageContent">
+              <div class="page-info">
+                <span>第 {{ currentPageData.page_no }} 页</span>
+                <span class="page-size">{{ currentPageData.width.toFixed(0) }} × {{ currentPageData.height.toFixed(0) }}</span>
+                <span v-if="currentPageData.table_count">{{ currentPageData.table_count }} 个表格</span>
+                <span v-if="currentPageData.picture_count">{{ currentPageData.picture_count }} 张图片</span>
+              </div>
+              <div
+                class="markdown-body"
+                v-html="renderMarkdown(currentPageData.markdown)"
+              />
+            </div>
+          </div>
+        </template>
+      </div>
+
+      <template #footer>
+        <div class="dialog-footer">
+          <div class="page-nav-btns">
+            <el-button :disabled="currentPage === 0" @click="prevPage">上一页</el-button>
+            <span class="page-indicator">{{ currentPage + 1 }} / {{ pages.length }}</span>
+            <el-button :disabled="currentPage >= pages.length - 1" @click="nextPage">下一页</el-button>
+          </div>
+          <el-button @click="pagesDialog = false">关闭</el-button>
+        </div>
+      </template>
+    </el-dialog>
   </div>
 </template>
 
@@ -531,5 +644,152 @@ onUnmounted(() => {
   color: var(--ink-2);
   white-space: pre-wrap;
   word-break: break-word;
+}
+
+/* ---------------- Pages dialog ---------------- */
+.pages-dialog {
+  min-height: 400px;
+}
+
+.pages-empty {
+  text-align: center;
+  color: var(--ink-3);
+  padding: 64px 0;
+  font-size: 14px;
+}
+
+.pages-layout {
+  display: flex;
+  gap: 0;
+  height: 62vh;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  overflow: hidden;
+}
+
+.pages-nav {
+  width: 120px;
+  flex-shrink: 0;
+  overflow-y: auto;
+  background: var(--surface-2);
+  border-right: 1px solid var(--border);
+  padding: 8px;
+}
+
+.page-thumb {
+  padding: 10px 8px;
+  border-radius: 6px;
+  cursor: pointer;
+  margin-bottom: 4px;
+  transition: background 0.15s;
+}
+
+.page-thumb:hover {
+  background: var(--surface);
+}
+
+.page-thumb.active {
+  background: var(--brand-soft);
+}
+
+.page-no {
+  display: block;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--ink);
+}
+
+.page-thumb.active .page-no {
+  color: var(--brand);
+}
+
+.page-meta {
+  display: block;
+  font-size: 11px;
+  color: var(--ink-4);
+  margin-top: 2px;
+}
+
+.pages-content {
+  flex: 1;
+  overflow-y: auto;
+  padding: 16px 24px;
+}
+
+.page-info {
+  display: flex;
+  gap: 12px;
+  align-items: center;
+  flex-wrap: wrap;
+  font-size: 12.5px;
+  color: var(--ink-3);
+  padding-bottom: 12px;
+  margin-bottom: 16px;
+  border-bottom: 1px solid var(--border);
+}
+
+.page-size {
+  font-variant-numeric: tabular-nums;
+}
+
+.markdown-body {
+  font-size: 14px;
+  line-height: 1.8;
+  color: var(--ink-2);
+}
+
+.markdown-body :deep(h1),
+.markdown-body :deep(h2),
+.markdown-body :deep(h3) {
+  color: var(--ink);
+  margin-top: 1.2em;
+  margin-bottom: 0.4em;
+}
+
+.markdown-body :deep(table) {
+  width: 100%;
+  border-collapse: collapse;
+  margin: 12px 0;
+  font-size: 13px;
+}
+
+.markdown-body :deep(th),
+.markdown-body :deep(td) {
+  border: 1px solid var(--border);
+  padding: 6px 10px;
+  text-align: left;
+}
+
+.markdown-body :deep(th) {
+  background: var(--surface-2);
+  font-weight: 600;
+}
+
+.markdown-body :deep(p) {
+  margin: 0.5em 0;
+}
+
+.markdown-body :deep(img) {
+  max-width: 100%;
+}
+
+.dialog-footer {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+
+.page-nav-btns {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.page-indicator {
+  font-size: 13px;
+  font-variant-numeric: tabular-nums;
+  color: var(--ink-3);
+  min-width: 60px;
+  text-align: center;
 }
 </style>

@@ -157,3 +157,51 @@ async def delete_document_by_id(document_id: int) -> tuple[int, str]:
 
     logger.info("Deleted document %d (%s), %d chunks removed", document_id, file_name, deleted_chunks)
     return deleted_chunks, file_name
+
+
+async def get_document_pages(document_id: int) -> list[dict]:
+    """获取文档每页的解析结果（文字、表格、图片）"""
+    from pathlib import Path
+
+    from docling_core.types.doc import DoclingDocument
+
+    # 先查文档 filename，再定位 debug JSON（按文件 stem 命名）
+    async with AsyncSessionLocal() as db:
+        doc_record = await db.get(Document, document_id)
+    if doc_record is None:
+        return []
+
+    json_path = Path("debug") / f"{Path(doc_record.file_name).stem}.json"
+    if not json_path.exists():
+        return []
+
+    doc = DoclingDocument.load_from_json(json_path)
+
+    pages = []
+    for page_no, page_item in doc.pages.items():
+        markdown = doc.export_to_markdown(page_no=page_no)
+
+        # 统计该页元素
+        table_count = 0
+        picture_count = 0
+        for item in doc.tables:
+            for prov in item.prov:
+                if prov.page_no == page_no:
+                    table_count += 1
+                    break
+        for item in doc.pictures:
+            for prov in item.prov:
+                if prov.page_no == page_no:
+                    picture_count += 1
+                    break
+
+        pages.append({
+            "page_no": page_no,
+            "width": page_item.size.width if page_item.size else 0,
+            "height": page_item.size.height if page_item.size else 0,
+            "markdown": markdown,
+            "table_count": table_count,
+            "picture_count": picture_count,
+        })
+
+    return pages

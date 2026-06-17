@@ -76,6 +76,22 @@ export function getDocumentChunks(documentId: number) {
   )
 }
 
+// 文档每页解析结果
+export interface PageData {
+  page_no: number
+  width: number
+  height: number
+  markdown: string
+  table_count: number
+  picture_count: number
+}
+
+export function getDocumentPages(documentId: number) {
+  return request.get<{ code: number; msg: string; data: { pages: PageData[]; total: number } }>(
+    `/document/${documentId}/pages`,
+  )
+}
+
 // 知识库检索
 export function searchKnowledge(query: string, topK = 5) {
   return request.post<{ code: number; msg: string; data: { results: SearchResult[]; total: number } }>(

@@ -1,7 +1,10 @@
-"""子进程 worker：运行 document_chunk，结果 JSON → stdout，错误 → stderr"""
+"""子进程 worker：结果 JSON → stdout，错误 → stderr，日志 → 文件"""
 
 import json
+import logging
 import sys
+
+from app.core.logging import setup_logging
 
 
 def main() -> None:
@@ -9,15 +12,15 @@ def main() -> None:
         print("usage: _chunk_worker.py <file_path>", file=sys.stderr)
         sys.exit(1)
 
-    file_path = sys.argv[1]
-    try:
-        from app.services.rag_chunk import document_chunk
+    setup_logging()
+    for h in list(logging.getLogger().handlers):
+        if type(h) is logging.StreamHandler:
+            logging.getLogger().removeHandler(h)
 
-        chunks = document_chunk(file_path)
-        json.dump(chunks, sys.stdout, ensure_ascii=False, default=str)
-    except Exception as exc:
-        print(str(exc), file=sys.stderr)
-        sys.exit(1)
+    from app.services.rag_chunk import document_chunk
+
+    chunks = document_chunk(sys.argv[1])
+    json.dump(chunks, sys.stdout, ensure_ascii=False, default=str)
 
 
 if __name__ == "__main__":
