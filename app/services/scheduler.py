@@ -131,6 +131,8 @@ async def _run(document_id: int) -> None:
         await update_document_status(document_id, DocumentStatus.FAILED, error_message="用户取消")
         logger.info("Doc#%d cancelled", document_id)
     except Exception as exc:
+        import traceback
+        traceback.print_exc()
         # ---- 重试 / 彻底失败 ----
         doc = await get_document(document_id)
         retry = (doc.retry_count or 0) + 1 if doc else 1

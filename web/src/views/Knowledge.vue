@@ -26,7 +26,7 @@ async function openChunks(row: DocumentItem) {
   chunkLoading.value = true
   try {
     const res = await getDocumentChunks(row.id)
-    chunks.value = res.data.items
+    chunks.value = res.data.data.items
   } catch {
     chunks.value = []
   } finally {
@@ -53,7 +53,7 @@ async function openPages(row: DocumentItem) {
   currentPage.value = 0
   try {
     const res = await getDocumentPages(row.id)
-    pages.value = res.data.pages
+    pages.value = res.data.data.pages
   } catch {
     pages.value = []
   } finally {
@@ -93,7 +93,7 @@ async function fetchDocuments() {
   loading.value = true
   try {
     const res = await getDocuments()
-    documents.value = res.data.items
+    documents.value = res.data.data.items
   } finally {
     loading.value = false
   }
@@ -172,7 +172,7 @@ function startPolling() {
     if (!hasPending.value) return
     try {
       const res = await getDocuments()
-      documents.value = res.data.items
+      documents.value = res.data.data.items
     } catch { /* silent */ }
   }, 10000)
 }

@@ -7,6 +7,7 @@ from sqlmodel import select
 
 from app.core.deps import CurrentUser, OAuth2Form, SessionDep
 from app.core.logging import get_logger
+from app.core.response import UnifiedResponseRoute
 from app.core.security import (
     DUMMY_HASHED_PASSWORD,
     create_access_token,
@@ -20,19 +21,15 @@ from app.core.security import (
 )
 from app.models.user import User, UserCreate, UserOut
 from app.schemas.schemas import (
-    RESPONSE_400,
-    RESPONSE_401,
-    RESPONSE_422,
     PasswordChangeRequest,
     PasswordResetConfirm,
     PasswordResetRequest,
     RefreshTokenRequest,
-    ResponseBase,
     Token,
 )
 
 logger = get_logger(__name__)
-router = APIRouter(prefix="/auth", tags=["认证"])
+router = APIRouter(prefix="/auth", tags=["认证"], route_class=UnifiedResponseRoute)
 
 
 def send_welcome_email(email: str, username: str) -> None:
@@ -47,9 +44,8 @@ def send_password_reset_email(email: str, token: str) -> None:
 
 @router.post(
     "/register",
-    response_model=ResponseBase[UserOut],
+    response_model=UserOut,
     status_code=status.HTTP_201_CREATED,
-    responses={**RESPONSE_400, **RESPONSE_422},
 )
 async def register(user_in: UserCreate, background_tasks: BackgroundTasks, db: SessionDep) -> Any:
     """注册新用户"""
@@ -71,14 +67,10 @@ async def register(user_in: UserCreate, background_tasks: BackgroundTasks, db: S
 
     background_tasks.add_task(send_welcome_email, user.email, user.username)
     logger.info("User registered: %s", user.username)
-    return ResponseBase(code=status.HTTP_201_CREATED, data=user)
+    return user
 
 
-@router.post(
-    "/login",
-    response_model=ResponseBase[Token],
-    responses={**RESPONSE_401},
-)
+@router.post("/login", response_model=Token)
 async def login(form: OAuth2Form, db: SessionDep) -> Any:
     """登录获取 JWT Token - 支持用户名或邮箱登录（OAuth2 兼容）"""
     result = await db.exec(select(User).where((User.username == form.username) | (User.email == form.username)))
@@ -91,7 +83,6 @@ async def login(form: OAuth2Form, db: SessionDep) -> Any:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="用户或密码错误",
-            headers={"WWW-Authenticate": "Bearer"},
         )
 
     # 哈希算法过旧时自动升级
@@ -102,14 +93,10 @@ async def login(form: OAuth2Form, db: SessionDep) -> Any:
     access_token = create_access_token(data={"sub": user.username})
     refresh_token = create_refresh_token(data={"sub": user.username})
     logger.info("User logged in: %s", user.username)
-    return ResponseBase(data=Token(access_token=access_token, refresh_token=refresh_token))
+    return Token(access_token=access_token, refresh_token=refresh_token)
 
 
-@router.post(
-    "/refresh",
-    response_model=ResponseBase[Token],
-    responses={**RESPONSE_401},
-)
+@router.post("/refresh", response_model=Token)
 async def refresh(body: RefreshTokenRequest) -> Any:
     """用 refresh token 换取新的 access token 和 refresh token"""
     payload = decode_access_token(body.refresh_token)
@@ -122,14 +109,10 @@ async def refresh(body: RefreshTokenRequest) -> Any:
 
     access_token = create_access_token(data={"sub": username})
     new_rt = create_refresh_token(data={"sub": username})
-    return ResponseBase(data=Token(access_token=access_token, refresh_token=new_rt))
+    return Token(access_token=access_token, refresh_token=new_rt)
 
 
-@router.post(
-    "/password-reset",
-    response_model=ResponseBase[None],
-    responses={**RESPONSE_422},
-)
+@router.post("/password-reset")
 async def request_password_reset(body: PasswordResetRequest, background_tasks: BackgroundTasks, db: SessionDep) -> Any:
     """申请密码重置 — 无论邮箱是否存在都返回相同响应，防止枚举"""
     result = await db.exec(select(User).where(User.email == body.email))
@@ -141,14 +124,10 @@ async def request_password_reset(body: PasswordResetRequest, background_tasks: B
         logger.info("Password reset requested for %s", user.email)
 
     # 邮箱不存在也返回成功，不泄露信息
-    return ResponseBase(msg="如果该邮箱已注册，重置邮件已发送")
+    return None
 
 
-@router.post(
-    "/password-reset/confirm",
-    response_model=ResponseBase[None],
-    responses={**RESPONSE_401, **RESPONSE_422},
-)
+@router.post("/password-reset/confirm")
 async def confirm_password_reset(body: PasswordResetConfirm, db: SessionDep) -> Any:
     """确认密码重置 — 用 token 设置新密码"""
     email = verify_password_reset_token(body.token)
@@ -162,14 +141,10 @@ async def confirm_password_reset(body: PasswordResetConfirm, db: SessionDep) -> 
     db.add(user)
     await db.commit()
     logger.info("Password reset confirmed for %s", user.email)
-    return ResponseBase(msg="密码已重置")
+    return None
 
 
-@router.patch(
-    "/change-password",
-    response_model=ResponseBase[None],
-    responses={**RESPONSE_401, **RESPONSE_422},
-)
+@router.patch("/change-password")
 async def change_password(body: PasswordChangeRequest, user: CurrentUser, db: SessionDep) -> Any:
     """修改密码 — 需登录，验证旧密码后设置新密码"""
     if not verify_password(body.current_password, user.hashed_password):
@@ -179,4 +154,4 @@ async def change_password(body: PasswordChangeRequest, user: CurrentUser, db: Se
     db.add(user)
     await db.commit()
     logger.info("Password changed for %s", user.username)
-    return ResponseBase(msg="密码已修改")
+    return None

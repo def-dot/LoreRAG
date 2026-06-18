@@ -57,7 +57,7 @@ def encode_hybrid(text: str) -> dict[str, Any]:
     model = _get_model()
     output = model.encode([text], return_dense=True, return_sparse=True)
     return {
-        "dense": output["dense"][0].tolist(),
+        "dense": output["dense_vecs"][0].tolist(),
         "sparse": _decode_sparse_weights(output["lexical_weights"][0]),
     }
 

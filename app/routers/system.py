@@ -4,11 +4,11 @@ from typing import Any
 
 from fastapi import APIRouter
 
-from app.schemas.schemas import ResponseBase
+from app.core.response import UnifiedResponseRoute
 
-router = APIRouter(tags=["系统"])
+router = APIRouter(tags=["系统"], route_class=UnifiedResponseRoute)
 
 
-@router.get("/health", response_model=ResponseBase[dict[str, Any]])
+@router.get("/health", response_model=dict[str, Any])
 async def health_check() -> Any:
-    return ResponseBase(data={"status": "ssss"})
+    return {"status": "ssss"}

@@ -8,6 +8,7 @@ from fastapi import APIRouter, HTTPException
 
 from app.core.deps import SessionDep
 from app.core.logging import get_logger
+from app.core.response import UnifiedResponseRoute
 from app.schemas.rag import (
     SearchRequest,
     SearchResponse,
@@ -16,7 +17,7 @@ from app.services import rag_query
 from app.services.scheduler import cancel_and_await
 
 logger = get_logger(__name__)
-router = APIRouter(prefix="/rag", tags=["RAG 知识库"])
+router = APIRouter(prefix="/rag", tags=["RAG 知识库"], route_class=UnifiedResponseRoute)
 
 
 @router.post("/search", response_model=SearchResponse)

@@ -8,25 +8,19 @@ from sqlmodel import col, select
 
 from app.core.deps import CurrentUser, SessionDep
 from app.core.logging import get_logger
+from app.core.response import UnifiedResponseRoute
 from app.core.security import get_current_user
 from app.models.item import Item, ItemCreate, ItemOut, ItemUpdate
-from app.schemas.schemas import (
-    RESPONSE_401,
-    RESPONSE_403,
-    RESPONSE_404,
-    Page,
-    ResponseBase,
-)
+from app.schemas.schemas import Page
 
 logger = get_logger(__name__)
-router = APIRouter(prefix="/items", tags=["Item"], dependencies=[Depends(get_current_user)])
+router = APIRouter(prefix="/items", tags=["Item"], dependencies=[Depends(get_current_user)], route_class=UnifiedResponseRoute)
 
 
 @router.post(
     "/",
-    response_model=ResponseBase[ItemOut],
+    response_model=ItemOut,
     status_code=status.HTTP_201_CREATED,
-    responses={**RESPONSE_401},
 )
 async def create_item(item_in: ItemCreate, current_user: CurrentUser, db: SessionDep) -> Any:
     """创建 Item"""
@@ -35,18 +29,18 @@ async def create_item(item_in: ItemCreate, current_user: CurrentUser, db: Sessio
     await db.commit()
     await db.refresh(item)
     logger.info("Item created: id=%d by user=%s", item.id, current_user.username)
-    return ResponseBase(code=status.HTTP_201_CREATED, data=item)
+    return item
 
 
-@router.get("/", response_model=ResponseBase[Page[ItemOut]], responses={**RESPONSE_401})
+@router.get("/", response_model=Page[ItemOut])
 async def list_items(db: SessionDep, skip: int = 0, limit: int = 20) -> Any:
     """获取 Item 列表（分页）"""
     total = (await db.exec(select(func.count(col(Item.id))))).one()
     items = (await db.exec(select(Item).offset(skip).limit(limit))).all()
-    return ResponseBase(data=Page(items=list(items), total=total))
+    return Page(items=list(items), total=total)
 
 
-@router.get("/me", response_model=ResponseBase[Page[ItemOut]], responses={**RESPONSE_401})
+@router.get("/me", response_model=Page[ItemOut])
 async def list_my_items(
     current_user: CurrentUser,
     db: SessionDep,
@@ -57,23 +51,19 @@ async def list_my_items(
     q = select(Item).where(Item.owner_id == current_user.id)
     total = (await db.exec(select(func.count(col(Item.id))).where(Item.owner_id == current_user.id))).one()
     items = (await db.exec(q.offset(skip).limit(limit))).all()
-    return ResponseBase(data=Page(items=list(items), total=total))
+    return Page(items=list(items), total=total)
 
 
-@router.get("/{item_id}", response_model=ResponseBase[ItemOut], responses={**RESPONSE_401, **RESPONSE_404})
+@router.get("/{item_id}", response_model=ItemOut)
 async def read_item(item_id: int, db: SessionDep) -> Any:
     """获取单个 Item"""
     item = await db.get(Item, item_id)
     if not item:
         raise HTTPException(status_code=404, detail="Item 不存在")
-    return ResponseBase(data=item)
+    return item
 
 
-@router.put(
-    "/{item_id}",
-    response_model=ResponseBase[ItemOut],
-    responses={**RESPONSE_401, **RESPONSE_403, **RESPONSE_404},
-)
+@router.put("/{item_id}", response_model=ItemOut)
 async def update_item(
     item_id: int,
     item_in: ItemUpdate,
@@ -93,14 +83,10 @@ async def update_item(
     await db.commit()
     await db.refresh(item)
     logger.info("Item updated: id=%d by user=%s", item.id, current_user.username)
-    return ResponseBase(data=item)
+    return item
 
 
-@router.delete(
-    "/{item_id}",
-    response_model=ResponseBase[None],
-    responses={**RESPONSE_401, **RESPONSE_403, **RESPONSE_404},
-)
+@router.delete("/{item_id}")
 async def delete_item(
     item_id: int,
     current_user: CurrentUser,
@@ -116,4 +102,4 @@ async def delete_item(
     await db.delete(item)
     await db.commit()
     logger.info("Item deleted: id=%d by user=%s", item_id, current_user.username)
-    return ResponseBase(msg="删除成功")
+    return None

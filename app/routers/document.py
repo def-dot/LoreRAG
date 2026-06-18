@@ -6,6 +6,7 @@ from fastapi import APIRouter, HTTPException, UploadFile, status
 from fastapi.responses import FileResponse
 
 from app.core.logging import get_logger
+from app.core.response import UnifiedResponseRoute
 from app.schemas.rag import (
     ChunkListResponse,
     DeleteResponse,
@@ -19,7 +20,7 @@ from app.core.config import settings
 from app.services.scheduler import cancel_and_await, schedule
 
 logger = get_logger(__name__)
-router = APIRouter(prefix="/document", tags=["文档管理"])
+router = APIRouter(prefix="/document", tags=["文档管理"], route_class=UnifiedResponseRoute)
 
 
 @router.post("/upload", response_model=UploadResponse, status_code=status.HTTP_202_ACCEPTED)

@@ -45,7 +45,7 @@ async def search(query: str, db: AsyncSession, top_k: int = 5) -> list[SearchRes
                (SELECT SUM(COALESCE(
                    (sparse_lexicon->>t.key)::float * (t.value)::float, 0
                ))
-               FROM jsonb_each_text(:q_weights::jsonb) AS t(key, value)) AS sparse_score
+               FROM jsonb_each_text(CAST(:q_weights AS jsonb)) AS t(key, value)) AS sparse_score
         FROM document_chunks
         WHERE sparse_lexicon ?| :tokens
         ORDER BY sparse_score DESC
