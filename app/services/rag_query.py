@@ -1,99 +1,60 @@
-"""RAG 检索服务 — pgvector 稠密检索 + JSONB 稀疏检索 + RRF 融合"""
+"""RAG 检索服务 — 两阶段:多路召回 + RRF 融合 → Reranker 精排"""
 
-import json
-from typing import Any
+import asyncio
 
-from sqlalchemy import text
 from sqlmodel.ext.asyncio.session import AsyncSession
 
 from app.core.logging import get_logger
-from app.schemas.rag import SearchResult
+from app.schemas.rag import SearchResult, ChunkItem
 from app.services.embedding import encode_hybrid
+from app.services.rag_rerank import rerank
+from app.services.chunk import get_chunks_by_dense, get_chunks_by_parse
 
 logger = get_logger(__name__)
 
+# 第一阶段:每路召回条数与 RRF 候选数(独立于最终 top_k)
+RECALL_COUNT = 100
+RRF_CANDIDATES = 50
+RRF_K = 60
 
-def _vector_to_str(vec: list[float]) -> str:
-    """将向量列表转换为 PostgreSQL vector 字面量字符串"""
-    return "[" + ",".join(str(v) for v in vec) + "]"
 
-
-async def search(query: str, db: AsyncSession, top_k: int = 5) -> list[SearchResult]:
+async def search(query: str, top_k: int = 5) -> list[SearchResult]:
     """
-    混合检索：稠密向量相似度 + JSONB 稀疏词权重 RRF 融合
+    两阶段混合检索:
 
-    1. 稠密向量检索（HNSW 索引加速）
-    2. 稀疏词权重检索（GIN 索引加速）
-    3. RRF (Reciprocal Rank Fusion) 融合两路结果
+    1. 多路召回 + RRF 融合 — 稠密向量(HNSW)与稀疏词权重(GIN)各捞 RECALL_COUNT 条,
+       RRF 合并取前 RRF_CANDIDATES 条候选;
+    2. Reranker 精排 — 对候选用 cross-encoder (query, passage) 重打分,降序截取 top_k。
     """
-    hybrid = encode_hybrid(query)
-    vec_str = _vector_to_str(hybrid["dense"])
-    tokens = list(hybrid["sparse"].keys())
+    hybrid = await asyncio.to_thread(encode_hybrid, query)
 
-    # 稠密向量检索
-    dense_sql = text("""
-        SELECT id, file_name, page_numbers, heading_context, raw_content
-        FROM document_chunks
-        ORDER BY dense_vector <=> CAST(:qvec AS vector)
-        LIMIT :limit
-    """)
-    dense_rows = (await db.execute(dense_sql, {"qvec": vec_str, "limit": top_k * 2})).fetchall()
+    # ---------- 第一阶段: 多路召回 + RRF 融合 ----------
+    dense_result = await get_chunks_by_dense(hybrid["dense"], limit=RECALL_COUNT)
+    sparse_result = await get_chunks_by_parse(hybrid["sparse"], limit=RECALL_COUNT)
 
-    # 稀疏词权重检索
-    sparse_sql = text("""
-        SELECT id, file_name, page_numbers, heading_context, raw_content,
-               (SELECT SUM(COALESCE(
-                   (sparse_lexicon->>t.key)::float * (t.value)::float, 0
-               ))
-               FROM jsonb_each_text(CAST(:q_weights AS jsonb)) AS t(key, value)) AS sparse_score
-        FROM document_chunks
-        WHERE sparse_lexicon ?| :tokens
-        ORDER BY sparse_score DESC
-        LIMIT :limit
-    """)
-    sparse_rows = (
-        await db.execute(
-            sparse_sql,
-            {
-                "q_weights": json.dumps(hybrid["sparse"]),
-                "tokens": tokens,
-                "limit": top_k * 2,
-            },
-        )
-    ).fetchall()
+    # ---------- RRF 融合 ----------
+    rrf_result: dict[int, SearchResult] = {}
+    for rank, row in enumerate(dense_result):
+        if row.chunk_id not in rrf_result:
+            rrf_result[row.chunk_id] = row
+        rrf_result[row.chunk_id].score += 1.0 / (RRF_K + rank + 1)
 
-    # RRF 融合
-    k = 60
-    scores: dict[int, float] = {}
-    chunk_data: dict[int, dict[str, Any]] = {}
+    for rank, row in enumerate(sparse_result):
+        if row.chunk_id not in rrf_result:
+            rrf_result[row.chunk_id] = row
+        rrf_result[row.chunk_id].score += 1.0 / (RRF_K + rank + 1)
 
-    def _add_row(row: Any, rank: int) -> None:
-        scores[row[0]] = scores.get(row[0], 0) + 1.0 / (k + rank + 1)
-        if row[0] not in chunk_data:
-            chunk_data[row[0]] = {
-                "file_name": row[1],
-                "page_numbers": row[2] or [],
-                "heading_context": row[3] or "",
-                "content": row[4],
-            }
+    candidates = sorted(rrf_result.values(), key=lambda x: x.score, reverse=True)[:RRF_CANDIDATES]
+    if not candidates:
+        return []
 
-    for rank, row in enumerate(dense_rows):
-        _add_row(row, rank)
+    # ---------- 第二阶段:Reranker 精排 ----------
+    passages = [chunk.content or "" for chunk in candidates]
+    rerank_scores = await asyncio.to_thread(rerank, query, passages)
 
-    for rank, row in enumerate(sparse_rows):
-        _add_row(row, rank)
+    # 用 Reranker 分数覆盖 RRF 分数
+    for candidate, score in zip(candidates, rerank_scores):
+        candidate.score = score
 
-    # 按融合分数降序排列
-    ranked = sorted(scores.items(), key=lambda x: x[1], reverse=True)[:top_k]
-
-    return [
-        SearchResult(
-            chunk_id=cid,
-            file_name=chunk_data[cid]["file_name"],
-            page_numbers=chunk_data[cid]["page_numbers"],
-            heading_context=chunk_data[cid]["heading_context"],
-            content=chunk_data[cid]["content"],
-            score=score,
-        )
-        for cid, score in ranked
-    ]
+    # 按 Reranker 分数降序,截 top_k
+    return sorted(candidates, key=lambda x: x.score, reverse=True)[:top_k]

@@ -9,10 +9,9 @@ from fastapi.routing import APIRoute
 
 
 class UnifiedResponseRoute(APIRoute):
-    """自定义路由类：成功（2xx）JSON 响应自动包装为统一信封 {code, msg, data}。
+    """自定义路由类：成功（2xx）JSON 响应封装成统一格式 {code, msg, data}。
 
-    错误响应由 app.core.exceptions 的全局异常处理器统一返回（已是信封、状态码 4xx/5xx），
-    它们以异常形式抛出，不会走到这里的包装逻辑，因此不会重复封装。
+    错误响应由 app.core.exceptions 的全局异常处理器统一返回
     """
 
     def get_route_handler(self) -> Callable:

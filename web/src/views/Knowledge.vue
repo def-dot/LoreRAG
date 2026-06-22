@@ -225,7 +225,7 @@ onUnmounted(() => {
         </div>
       </template>
 
-      <el-table :data="documents" v-loading="loading" stripe empty-text="暂无文档，请上传" @row-click="openChunks">
+      <el-table :data="documents" v-loading="loading" stripe empty-text="暂无文档，请上传">
         <el-table-column label="文件名" min-width="220">
           <template #default="{ row }">
             <div class="file-name">
@@ -254,7 +254,15 @@ onUnmounted(() => {
             </el-tag>
           </template>
         </el-table-column>
-        <el-table-column prop="chunk_count" label="切片数" width="90" align="center" />
+        <el-table-column label="切片数" width="90" align="center">
+          <template #default="{ row }">
+            <span
+              class="chunk-count-link"
+              :class="{ disabled: row.status === 'failed' }"
+              @click="openChunks(row)"
+            >{{ row.chunk_count }}</span>
+          </template>
+        </el-table-column>
 
         <el-table-column label="上传时间" width="150">
           <template #default="{ row }">
@@ -579,8 +587,21 @@ onUnmounted(() => {
   padding: 11px 0;
 }
 
-.table-card :deep(.el-table__body tr) {
+.chunk-count-link {
+  font-variant-numeric: tabular-nums;
+  font-weight: 600;
+  color: var(--brand);
   cursor: pointer;
+  transition: opacity 0.15s ease;
+}
+
+.chunk-count-link:hover {
+  opacity: 0.75;
+}
+
+.chunk-count-link.disabled {
+  color: var(--ink-4);
+  cursor: default;
 }
 
 /* ---------------- Chunk drawer ---------------- */

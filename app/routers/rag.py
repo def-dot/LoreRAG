@@ -23,14 +23,13 @@ router = APIRouter(prefix="/rag", tags=["RAG 知识库"], route_class=UnifiedRes
 @router.post("/search", response_model=SearchResponse)
 async def search_knowledge_base(
     req: SearchRequest,
-    db: SessionDep,
 ) -> Any:
     """
     知识库检索
 
     使用稠密向量 + 全文检索 RRF 融合，返回最相关的文档切片。
     """
-    results = await rag_query.search(req.query, db, req.top_k)
+    results = await rag_query.search(req.query, req.top_k)
     return SearchResponse(results=results, total=len(results))
 
 

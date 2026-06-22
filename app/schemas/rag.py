@@ -16,11 +16,12 @@ class SearchResult(BaseModel):
     """单条检索结果"""
 
     chunk_id: int = Field(description="切片 ID")
+    document_id: int = Field(description="所属文档 ID")
     file_name: str = Field(description="来源文件名")
     page_numbers: list[int] = Field(default=[], description="页码")
     heading_context: str = Field(default="", description="章节上下文")
     content: str = Field(description="原始内容（Markdown 表格 / LaTeX 公式 / 图片描述）")
-    score: float = Field(description="相似度得分")
+    score: float = Field(description="Reranker 相关性分数 ∈ [0,1]，1.0 表示完全相关")
 
 
 class SearchResponse(BaseModel):
@@ -86,6 +87,7 @@ class ChunkItem(BaseModel):
 
     id: int = Field(description="切片 ID")
     document_id: int = Field(description="所属文档 ID")
+    file_name: str = Field(description="文件名称")
     page_numbers: list[int] = Field(default=[], description="页码")
     heading_context: str = Field(default="", description="章节上下文")
     raw_content: str = Field(default="", description="原始内容（Markdown / LaTeX / 图片描述）")

@@ -9,8 +9,8 @@ from sqlalchemy import text, select
 from app.core.database import AsyncSessionLocal
 from app.core.logging import get_logger
 from app.services.embedding import encode_hybrid_batch
-from app.schemas.rag import ChunkItem
-from app.models.document import Document, DocumentChunk
+from app.schemas.rag import ChunkItem, SearchResult
+from app.models.document import DocumentChunk
 
 logger = get_logger(__name__)
 
@@ -34,6 +34,7 @@ async def list_chunks(document_id: int) -> list[ChunkItem]:
             ChunkItem(
                 id=chunk.id,
                 document_id=chunk.document_id,
+                file_name=chunk.file_name,
                 page_numbers=chunk.page_numbers or [],
                 heading_context=chunk.heading_context or "",
                 raw_content=chunk.raw_content or "",
@@ -93,3 +94,67 @@ async def insert_chunks(chunks: list[dict[str, Any]], document_id: int) -> int:
         await db.commit()
         logger.info("Stored %d/%d chunks (document_id=%d)", inserted_count, len(chunks), document_id)
         return inserted_count
+
+
+async def get_chunks_by_dense(query_vec: list[float], limit: int=100) -> list[SearchResult]:
+    query_vec_str = _vector_to_str(query_vec)
+    dense_sql = text("""
+            SELECT id, document_id, file_name, page_numbers, heading_context, raw_content, 
+                     dense_vector <=> CAST(:qvec AS vector) as score
+            FROM document_chunks
+            ORDER BY dense_vector <=> CAST(:qvec AS vector)
+            LIMIT :limit
+        """)
+    async with AsyncSessionLocal() as db:
+        rows = (await db.execute(dense_sql, {"qvec": query_vec_str, "limit": limit})).fetchall()
+        return [
+            SearchResult(
+                chunk_id=chunk[0],
+                document_id=chunk[1],
+                file_name=chunk[2],
+                page_numbers=chunk[3],
+                heading_context=chunk[4],
+                content=chunk[5],
+                score=chunk[6],
+            )
+            for chunk in rows
+        ]
+
+
+async def get_chunks_by_parse(query_parse: dict[str, float], limit: int=100) -> list[SearchResult]:
+    tokens = list(query_parse.keys())
+    sparse_sql = text("""
+            SELECT id, document_id, file_name, page_numbers, heading_context, raw_content,
+                (SELECT SUM(COALESCE(
+                    (sparse_lexicon->>t.key)::float * (t.value)::float, 0
+                ))
+                FROM jsonb_each_text(CAST(:q_weights AS jsonb)) AS t(key, value)) AS score
+            FROM document_chunks
+            WHERE sparse_lexicon ?| :tokens
+            ORDER BY score DESC
+            LIMIT :limit
+        """)
+    async with AsyncSessionLocal() as db:
+        rows = (
+            await db.execute(
+                sparse_sql,
+                {
+                    "q_weights": json.dumps(query_parse),
+                    "tokens": tokens,
+                    "limit": limit,
+                },
+            )
+        ).fetchall()
+        return [
+            SearchResult(
+                chunk_id=chunk[0],
+                document_id=chunk[1],
+                file_name=chunk[2],
+                page_numbers=chunk[3],
+                heading_context=chunk[4],
+                content=chunk[5],
+                score=chunk[6],
+            )
+            for chunk in rows
+        ]
+
