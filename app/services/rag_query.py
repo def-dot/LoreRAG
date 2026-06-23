@@ -1,13 +1,11 @@
 """RAG 检索服务 — 两阶段:多路召回 + RRF 融合 → Reranker 精排"""
 
-import asyncio
-
 from sqlmodel.ext.asyncio.session import AsyncSession
 
 from app.core.logging import get_logger
 from app.schemas.rag import SearchResult, ChunkItem
 from app.services.embedding import encode_hybrid
-from app.services.rag_rerank import rerank
+from app.services.rerank import rerank
 from app.services.chunk import get_chunks_by_dense, get_chunks_by_parse
 
 logger = get_logger(__name__)
@@ -26,7 +24,7 @@ async def search(query: str, top_k: int = 5) -> list[SearchResult]:
        RRF 合并取前 RRF_CANDIDATES 条候选;
     2. Reranker 精排 — 对候选用 cross-encoder (query, passage) 重打分,降序截取 top_k。
     """
-    hybrid = await asyncio.to_thread(encode_hybrid, query)
+    hybrid = await encode_hybrid(query)
 
     # ---------- 第一阶段: 多路召回 + RRF 融合 ----------
     dense_result = await get_chunks_by_dense(hybrid["dense"], limit=RECALL_COUNT)
@@ -50,7 +48,7 @@ async def search(query: str, top_k: int = 5) -> list[SearchResult]:
 
     # ---------- 第二阶段:Reranker 精排 ----------
     passages = [chunk.content or "" for chunk in candidates]
-    rerank_scores = await asyncio.to_thread(rerank, query, passages)
+    rerank_scores = await rerank(query, passages)
 
     # 用 Reranker 分数覆盖 RRF 分数
     for candidate, score in zip(candidates, rerank_scores):

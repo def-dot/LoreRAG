@@ -1,6 +1,7 @@
 services:
   db:
     image: pgvector/pgvector:pg16
+    restart: always
     ports:
       - "${POSTGRES_PORT:-5432}:5432"
     environment:
@@ -18,6 +19,7 @@ services:
   redis:
     image: redis:7-alpine
     command: redis-server --requirepass ${REDIS_PASSWORD?variable not set}
+    restart: always
     ports:
       - "6379:6379"
     volumes:
@@ -27,6 +29,54 @@ services:
       interval: 5s
       timeout: 3s
       retries: 5
+
+  tei-embed:
+    image: ghcr.io/huggingface/text-embeddings-inference:cpu-1.6
+    container_name: bge-m3-embed
+    command: >
+      --model-id /data
+      --max-client-batch-size 16
+    volumes:
+      - ./hub/bge-m3:/data
+    ports:
+      - "8081:80"
+    environment:
+      - HF_HUB_OFFLINE=1
+    restart: always
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:80/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+    deploy:
+      resources:
+        limits:
+          cpus: '4'
+          memory: 8G
+
+  tei-rerank:
+    image: ghcr.io/huggingface/text-embeddings-inference:cpu-1.6
+    container_name: bge-reranker
+    command: >
+      --model-id /data
+      --max-client-batch-size 16
+    volumes:
+      - ./hub/bge-reranker-v2-m3:/data
+    ports:
+      - "8082:80"
+    environment:
+      - HF_HUB_OFFLINE=1
+    restart: always
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:80/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+    deploy:
+      resources:
+        limits:
+          cpus: '4'
+          memory: 6G
 
 volumes:
   pgdata:

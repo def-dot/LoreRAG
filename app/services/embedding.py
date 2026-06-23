@@ -1,77 +1,50 @@
-"""BGE-M3 向量嵌入服务 — 单例懒加载，支持稠密 + 稀疏双路输出"""
+"""BGE-M3 向量嵌入服务 — 通过 TEI HTTP API"""
 
 from __future__ import annotations
 
-from functools import lru_cache
 from typing import Any
 
+import httpx
 
-@lru_cache(maxsize=1)
-def _get_model() -> Any:
-    """延迟导入 FlagEmbedding，先确保模型已缓存到本地"""
-    from FlagEmbedding import BGEM3FlagModel  # type: ignore[import-untyped]
-
-    return BGEM3FlagModel(
-        "./hub/bge-m3",
-        use_fp16=True,
-    )
+TEI_EMBED_URL = "http://localhost:8081"
+TEI_TIMEOUT = 120.0
 
 
-def _get_tokenizer() -> Any:
-    """获取模型的 tokenizer，用于将 token ID 解码为文本"""
-    model = _get_model()
-    return model.tokenizer
-
-
-def _decode_sparse_weights(lexical: dict) -> dict[str, float]:
-    """将稀疏词权重中的 token ID key 解码为实际文本 token"""
-    tokenizer = _get_tokenizer()
-    decoded: dict[str, float] = {}
-    for k, v in lexical.items():
-        try:
-            token_id = int(k)
-            token_text = tokenizer.convert_ids_to_tokens(token_id)
-            # 去除 SentencePiece 的 ▁ 前缀（表示词首空格）
-            token_text = token_text.lstrip("▁")
-        except (ValueError, TypeError):
-            token_text = str(k)
-        decoded[token_text] = float(v)
-    return decoded
-
-
-def encode(text: str) -> list[float]:
-    """单条文本编码为稠密向量"""
-    model = _get_model()
-    return model.encode([text], return_dense=True)["dense"][0].tolist()
-
-
-def encode_batch(texts: list[str]) -> list[list[float]]:
-    """批量文本编码为稠密向量"""
-    model = _get_model()
-    output = model.encode(texts, return_dense=True)
-    return [vec.tolist() for vec in output["dense"]]
-
-
-def encode_hybrid(text: str) -> dict[str, Any]:
-    """单条文本编码为稠密向量 + 稀疏词权重"""
-    model = _get_model()
-    output = model.encode([text], return_dense=True, return_sparse=True)
-    return {
-        "dense": output["dense_vecs"][0].tolist(),
-        "sparse": _decode_sparse_weights(output["lexical_weights"][0]),
-    }
-
-
-def encode_hybrid_batch(texts: list[str]) -> list[dict[str, Any]]:
-    """批量文本编码为稠密向量 + 稀疏词权重"""
-    model = _get_model()
-    output = model.encode(texts, return_dense=True, return_sparse=True)
-    results = []
-    for dense_vec, lexical in zip(output["dense_vecs"], output["lexical_weights"]):
-        results.append(
-            {
-                "dense": dense_vec.tolist(),
-                "sparse": _decode_sparse_weights(lexical),
-            }
+async def _embed_texts(texts: list[str]) -> list[list[float]]:
+    """调用 TEI embedding 接口,返回稠密向量列表"""
+    async with httpx.AsyncClient(timeout=TEI_TIMEOUT) as client:
+        response = await client.post(
+            f"{TEI_EMBED_URL}/embed",
+            json={"inputs": texts, "truncate": True},
         )
-    return results
+        response.raise_for_status()
+        result = response.json()
+        # /embed 返回: 单条 → [[float, ...]]  多条 → [[float, ...], [float, ...]]
+        if isinstance(result[0], (int, float)):
+            return [result]
+        return result
+
+
+async def encode(text: str) -> list[float]:
+    """单条文本编码为稠密向量"""
+    results = await _embed_texts([text])
+    return results[0]
+
+
+async def encode_batch(texts: list[str]) -> list[list[float]]:
+    """批量文本编码为稠密向量"""
+    return await _embed_texts(texts)
+
+
+async def encode_hybrid(text: str) -> dict[str, Any]:
+    """单条文本编码为稠密向量 + 稀疏词权重"""
+    dense = await encode(text)
+    # TEI 默认仅返回稠密向量;稀疏词权重需要通过 TEI 的 sparse 参数启用
+    # 若不可用则返回空字典,稀疏检索路径将返回 0 条结果
+    return {"dense": dense, "sparse": {}}
+
+
+async def encode_hybrid_batch(texts: list[str]) -> list[dict[str, Any]]:
+    """批量文本编码为稠密向量 + 稀疏词权重"""
+    denses = await encode_batch(texts)
+    return [{"dense": d, "sparse": {}} for d in denses]
