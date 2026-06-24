@@ -1,0 +1,28 @@
+FROM pgvector/pgvector:pg16
+
+# 安装编译所需的依赖
+RUN apt-get update && apt-get install -y \
+    build-essential \
+    postgresql-server-dev-16 \
+    git \
+    && rm -rf /var/lib/apt/lists/*
+
+# 下载并编译安装 scws
+RUN git clone --depth 1 https://github.com/hightman/scws.git \
+    && cd scws \
+    && ./configure \
+    && make \
+    && make install \
+    && cd .. \
+    && rm -rf scws
+
+# 下载并编译安装 zhparser
+RUN git clone --depth 1 https://github.com/amyt/zhparser.git \
+    && cd zhparser \
+    && make \
+    && make install \
+    && cd .. \
+    && rm -rf zhparser
+
+# 卸载编译工具以精简镜像体积
+RUN apt-get remove -y build-essential postgresql-server-dev-16 git && apt-get autoremove -y

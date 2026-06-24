@@ -26,6 +26,35 @@ async def search(query: str, top_k: int = 5) -> list[SearchResult]:
     """
     hybrid = await encode_hybrid(query)
 
+    """
+    WITH dense_search AS (
+        -- 第一路：稠密向量检索，按余弦距离排序，计算出它的排名 (dense_rank)
+        SELECT id, ROW_NUMBER() OVER (ORDER BY dense_embedding <=> %s) as dense_rank
+        FROM doc_chunks
+        ORDER BY dense_embedding <=> %s
+        LIMIT 40 -- 粗筛前 40 个
+    ),
+    sparse_search AS (
+        -- 第二路：稀疏文本检索（BM25变体），利用 ts_rank_cd 计算字面匹配度排名 (sparse_rank)
+        SELECT id, ROW_NUMBER() OVER (ORDER BY ts_rank_cd(tsv_content, to_tsquery('chinese', %s)) DESC) as sparse_rank
+        FROM doc_chunks
+        WHERE tsv_content @@ to_tsquery('chinese', %s)
+        ORDER BY ts_rank_cd(tsv_content, to_tsquery('chinese', %s)) DESC
+        LIMIT 40 -- 粗筛前 40 个
+    )
+    -- 第三步：利用 RRF 公式将两路粗筛结果合并，并重新计算总分
+    SELECT 
+        coalesce(d.id, s.id) as id,
+        c.content,
+        -- RRF 融合公式，常数固定为 60（业界标准）
+        (coalesce(1.0 / (60.0 + d.dense_rank), 0.0) + coalesce(1.0 / (60.0 + s.sparse_rank), 0.0)) as rrf_score
+    FROM dense_search d
+    FULL OUTER JOIN sparse_search s ON d.id = s.id
+    JOIN doc_chunks c ON c.id = coalesce(d.id, s.id)
+    ORDER BY rrf_score DESC
+    LIMIT 5; -- 最终精准挑出前 5 个喂给大模型
+    """
+
     # ---------- 第一阶段: 多路召回 + RRF 融合 ----------
     dense_result = await get_chunks_by_dense(hybrid["dense"], limit=RECALL_COUNT)
     sparse_result = await get_chunks_by_parse(hybrid["sparse"], limit=RECALL_COUNT)

@@ -207,3 +207,11 @@ bash deploy.sh staging
 | `traefik` | 反向代理，监听 80 端口，将请求转发到 backend |
 | `db_migrate` | 数据库迁移，使用 `migrate` profile，deploy.sh 中通过 `$DC run --rm db_migrate` 一次性执行 |
 | `db_backup` | 数据库定时备份，基于 crond 每日自动备份到 `db_backup/` 目录 |
+
+
+## 创建数据表document_chunks
+CREATE INDEX ON document_chunks USING hnsw (dense_vector vector_cosine_ops);  
+CREATE INDEX ON document_chunks USING gin (tsv_content);
+CREATE TRIGGER tsvectorupdate BEFORE INSERT OR UPDATE
+ON document_chunks FOR EACH ROW EXECUTE FUNCTION
+tsvector_update_trigger(tsv_content, 'pg_catalog.chinese', raw_content);
