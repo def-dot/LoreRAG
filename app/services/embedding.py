@@ -2,8 +2,6 @@
 
 from __future__ import annotations
 
-from typing import Any
-
 import httpx
 
 TEI_EMBED_URL = "http://localhost:8081"
@@ -34,17 +32,3 @@ async def encode(text: str) -> list[float]:
 async def encode_batch(texts: list[str]) -> list[list[float]]:
     """批量文本编码为稠密向量"""
     return await _embed_texts(texts)
-
-
-async def encode_hybrid(text: str) -> dict[str, Any]:
-    """单条文本编码为稠密向量 + 稀疏词权重"""
-    dense = await encode(text)
-    # TEI 默认仅返回稠密向量;稀疏词权重需要通过 TEI 的 sparse 参数启用
-    # 若不可用则返回空字典,稀疏检索路径将返回 0 条结果
-    return {"dense": dense, "sparse": {}}
-
-
-async def encode_hybrid_batch(texts: list[str]) -> list[dict[str, Any]]:
-    """批量文本编码为稠密向量 + 稀疏词权重"""
-    denses = await encode_batch(texts)
-    return [{"dense": d, "sparse": {}} for d in denses]

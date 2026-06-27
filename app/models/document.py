@@ -5,7 +5,7 @@ from enum import StrEnum
 
 from pgvector.sqlalchemy import VECTOR  # type: ignore[import-untyped]
 from sqlalchemy import Text
-from sqlalchemy.dialects.postgresql import ARRAY, INTEGER, JSONB
+from sqlalchemy.dialects.postgresql import ARRAY, INTEGER, TSVECTOR
 from sqlmodel import Field, SQLModel
 
 from app.core.config import settings
@@ -60,7 +60,7 @@ class DocumentChunk(SQLModel, table=True):
 
     dense_vector: list[float] | None = Field(default=None, sa_type=VECTOR(settings.EMBEDDING_DIMENSION))
 
-    sparse_lexicon: dict | None = Field(default=None, sa_type=JSONB)
+    tsv_content: str | None = Field(default=None, sa_type=TSVECTOR)
 
 
 # ---------- 非表 Schema ----------

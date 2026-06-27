@@ -1,14 +1,13 @@
 """切片向量化与批量入库"""
 
 import asyncio
-import json
 from typing import Any
 
 from sqlalchemy import text, select
 
 from app.core.database import AsyncSessionLocal
 from app.core.logging import get_logger
-from app.services.embedding import encode_hybrid_batch
+from app.services.embedding import encode_batch
 from app.schemas.rag import ChunkItem, SearchResult
 from app.models.document import DocumentChunk
 
@@ -45,7 +44,7 @@ async def list_chunks(document_id: int) -> list[ChunkItem]:
 
 async def insert_chunks(chunks: list[dict[str, Any]], document_id: int) -> int:
     """
-    将切片批量写入数据库（含稠密向量 + 稀疏词权重）
+    将切片批量写入数据库（含稠密向量，tsv_content 由 PostgreSQL 触发器自动生成）
 
     返回写入的切片数量
     """
@@ -54,11 +53,11 @@ async def insert_chunks(chunks: list[dict[str, Any]], document_id: int) -> int:
         return 0
 
     texts = [c["enriched_text"] for c in chunks]
-    hybrid_outputs = await asyncio.to_thread(encode_hybrid_batch, texts)
+    dense_vectors = await asyncio.to_thread(encode_batch, texts)
 
     async with AsyncSessionLocal() as db:
         inserted_count = 0
-        for chunk_data, hybrid in zip(chunks, hybrid_outputs, strict=True):
+        for chunk_data, dense_vec in zip(chunks, dense_vectors, strict=True):
             try:
                 meta = chunk_data["metadata"]
                 await db.execute(
@@ -66,11 +65,11 @@ async def insert_chunks(chunks: list[dict[str, Any]], document_id: int) -> int:
                         """
                         INSERT INTO document_chunks
                             (document_id, file_name, page_numbers, heading_context,
-                             raw_content, enriched_content, dense_vector, sparse_lexicon)
+                             raw_content, enriched_content, dense_vector)
                         VALUES
                             (:document_id, :file_name, CAST(:page_numbers AS INTEGER[]),
                              :heading_context, :raw_content, :enriched_content,
-                             CAST(:dense_vector AS vector), CAST(:sparse_lexicon AS jsonb))
+                             CAST(:dense_vector AS vector))
                         """
                     ),
                     {
@@ -80,8 +79,7 @@ async def insert_chunks(chunks: list[dict[str, Any]], document_id: int) -> int:
                         "heading_context": meta["heading_context"],
                         "raw_content": chunk_data["raw_text"],
                         "enriched_content": chunk_data["enriched_text"],
-                        "dense_vector": _vector_to_str(hybrid["dense"]),
-                        "sparse_lexicon": json.dumps(hybrid["sparse"], ensure_ascii=False),
+                        "dense_vector": _vector_to_str(dense_vec),
                     },
                 )
                 inserted_count += 1
@@ -96,52 +94,57 @@ async def insert_chunks(chunks: list[dict[str, Any]], document_id: int) -> int:
         return inserted_count
 
 
-async def get_chunks_by_dense(query_vec: list[float], limit: int=100) -> list[SearchResult]:
+async def get_chunks_hybrid_rrf(
+    query_vec: list[float],
+    query_text: str,
+    recall_count: int = 100,
+    rrf_candidates: int = 50,
+    rrf_k: int = 60,
+) -> list[SearchResult]:
+    """单 SQL 完成 稠密向量 + tsvector BM25 双路召回 + RRF 融合，一次数据库往返"""
     query_vec_str = _vector_to_str(query_vec)
-    dense_sql = text("""
-            SELECT id, document_id, file_name, page_numbers, heading_context, raw_content, 
-                     dense_vector <=> CAST(:qvec AS vector) as score
-            FROM document_chunks
-            ORDER BY dense_vector <=> CAST(:qvec AS vector)
-            LIMIT :limit
-        """)
-    async with AsyncSessionLocal() as db:
-        rows = (await db.execute(dense_sql, {"qvec": query_vec_str, "limit": limit})).fetchall()
-        return [
-            SearchResult(
-                chunk_id=chunk[0],
-                document_id=chunk[1],
-                file_name=chunk[2],
-                page_numbers=chunk[3],
-                heading_context=chunk[4],
-                content=chunk[5],
-                score=chunk[6],
+    hybrid_sql = text("""
+            WITH dense_search AS (
+                SELECT id, document_id, file_name, page_numbers, heading_context, raw_content,
+                       ROW_NUMBER() OVER (ORDER BY dense_vector <=> CAST(:qvec AS vector)) AS rank
+                FROM document_chunks
+                ORDER BY dense_vector <=> CAST(:qvec AS vector)
+                LIMIT :recall_count
+            ),
+            sparse_search AS (
+                SELECT id, document_id, file_name, page_numbers, heading_context, raw_content,
+                       ROW_NUMBER() OVER (
+                           ORDER BY ts_rank_cd(tsv_content, plainto_tsquery('chinese', :query)) DESC
+                       ) AS rank
+                FROM document_chunks
+                WHERE tsv_content @@ plainto_tsquery('chinese', :query)
+                ORDER BY ts_rank_cd(tsv_content, plainto_tsquery('chinese', :query)) DESC
+                LIMIT :recall_count
             )
-            for chunk in rows
-        ]
-
-
-async def get_chunks_by_parse(query_parse: dict[str, float], limit: int=100) -> list[SearchResult]:
-    tokens = list(query_parse.keys())
-    sparse_sql = text("""
-            SELECT id, document_id, file_name, page_numbers, heading_context, raw_content,
-                (SELECT SUM(COALESCE(
-                    (sparse_lexicon->>t.key)::float * (t.value)::float, 0
-                ))
-                FROM jsonb_each_text(CAST(:q_weights AS jsonb)) AS t(key, value)) AS score
-            FROM document_chunks
-            WHERE sparse_lexicon ?| :tokens
+            SELECT
+                COALESCE(d.id, s.id)              AS id,
+                COALESCE(d.document_id, s.document_id) AS document_id,
+                COALESCE(d.file_name, s.file_name) AS file_name,
+                COALESCE(d.page_numbers, s.page_numbers) AS page_numbers,
+                COALESCE(d.heading_context, s.heading_context) AS heading_context,
+                COALESCE(d.raw_content, s.raw_content) AS raw_content,
+                COALESCE(1.0 / (:rrf_k + d.rank), 0.0)
+                    + COALESCE(1.0 / (:rrf_k + s.rank), 0.0) AS score
+            FROM dense_search d
+            FULL OUTER JOIN sparse_search s ON d.id = s.id
             ORDER BY score DESC
-            LIMIT :limit
+            LIMIT :rrf_candidates
         """)
     async with AsyncSessionLocal() as db:
         rows = (
             await db.execute(
-                sparse_sql,
+                hybrid_sql,
                 {
-                    "q_weights": json.dumps(query_parse),
-                    "tokens": tokens,
-                    "limit": limit,
+                    "qvec": query_vec_str,
+                    "query": query_text,
+                    "recall_count": recall_count,
+                    "rrf_candidates": rrf_candidates,
+                    "rrf_k": rrf_k,
                 },
             )
         ).fetchall()
@@ -157,4 +160,3 @@ async def get_chunks_by_parse(query_parse: dict[str, float], limit: int=100) -> 
             )
             for chunk in rows
         ]
-

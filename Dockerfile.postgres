@@ -1,28 +1,22 @@
 FROM pgvector/pgvector:pg16
 
-# 安装编译所需的依赖
+RUN sed -i 's|deb.debian.org|mirrors.aliyun.com|g' /etc/apt/sources.list.d/debian.sources
+
+# 编译安装 scws + zhparser 中文分词扩展
 RUN apt-get update && apt-get install -y \
-    build-essential \
-    postgresql-server-dev-16 \
-    git \
+        build-essential \
+        postgresql-server-dev-16 \
+        wget xz-utils \
+    # scws: 发布包自带 configure，无需 autotools
+    && wget -q https://github.com/hightman/scws/archive/refs/tags/1.2.3.tar.gz -O scws.tar.gz \
+    && tar xf scws.tar.gz && rm scws.tar.gz \
+    && cd scws-1.2.3 && ./configure && make && make install && cd .. && rm -rf scws-1.2.3 \
+    # zhparser: 发布包，直接 make
+    && wget -q https://github.com/amyt/zhparser/archive/master.tar.gz -O zhparser.tar.gz \
+    && tar xf zhparser.tar.gz && rm zhparser.tar.gz \
+    && cd zhparser-master && make && make install && cd .. && rm -rf zhparser-master \
+    && apt-get remove -y build-essential postgresql-server-dev-16 wget xz-utils \
+    && apt-get autoremove -y \
     && rm -rf /var/lib/apt/lists/*
 
-# 下载并编译安装 scws
-RUN git clone --depth 1 https://github.com/hightman/scws.git \
-    && cd scws \
-    && ./configure \
-    && make \
-    && make install \
-    && cd .. \
-    && rm -rf scws
-
-# 下载并编译安装 zhparser
-RUN git clone --depth 1 https://github.com/amyt/zhparser.git \
-    && cd zhparser \
-    && make \
-    && make install \
-    && cd .. \
-    && rm -rf zhparser
-
-# 卸载编译工具以精简镜像体积
-RUN apt-get remove -y build-essential postgresql-server-dev-16 git && apt-get autoremove -y
+COPY docker/init-zhparser.sql /docker-entrypoint-initdb.d/
