@@ -1,22 +1,42 @@
+# ========================================================
+# Stage 1: Build scws and zhparser
+# ========================================================
+FROM pgvector/pgvector:pg16 AS builder
+
+USER root
+
+RUN sed -i 's|deb.debian.org|mirrors.aliyun.com|g' /etc/apt/sources.list.d/debian.sources && \
+    sed -i 's|security.debian.org|mirrors.aliyun.com/debian-security|g' /etc/apt/sources.list.d/debian.sources
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+        build-essential \
+        postgresql-server-dev-16
+
+COPY docker/scws-1.2.3.tar.bz2 /tmp/
+COPY docker/zhparser-2.3.tar.gz /tmp/
+
+# 🌟 没有任何 rm -rf 和 ldconfig 废话的纯粹编译
+RUN cd /tmp \
+    && tar -xjf scws-1.2.3.tar.bz2 && cd scws-1.2.3 && ./configure && make && make install \
+    && cd /tmp \
+    && tar -xf zhparser-2.3.tar.gz && cd zhparser* && make && make install
+
+# ========================================================
+# Stage 2: Final image (完美的 471MB 纯净成品房)
+# ========================================================
 FROM pgvector/pgvector:pg16
 
-RUN sed -i 's|deb.debian.org|mirrors.aliyun.com|g' /etc/apt/sources.list.d/debian.sources
+USER root
 
-# 编译安装 scws + zhparser 中文分词扩展
-RUN apt-get update && apt-get install -y \
-        build-essential \
-        postgresql-server-dev-16 \
-        wget xz-utils \
-    # scws: 发布包自带 configure，无需 autotools
-    && wget -q https://github.com/hightman/scws/archive/refs/tags/1.2.3.tar.gz -O scws.tar.gz \
-    && tar xf scws.tar.gz && rm scws.tar.gz \
-    && cd scws-1.2.3 && ./configure && make && make install && cd .. && rm -rf scws-1.2.3 \
-    # zhparser: 发布包，直接 make
-    && wget -q https://github.com/amyt/zhparser/archive/master.tar.gz -O zhparser.tar.gz \
-    && tar xf zhparser.tar.gz && rm zhparser.tar.gz \
-    && cd zhparser-master && make && make install && cd .. && rm -rf zhparser-master \
-    && apt-get remove -y build-essential postgresql-server-dev-16 wget xz-utils \
-    && apt-get autoremove -y \
-    && rm -rf /var/lib/apt/lists/*
+COPY --from=builder /etc/apt/ /etc/apt/
+
+COPY --from=builder /usr/local/lib/libscws* /usr/local/lib/
+COPY --from=builder /usr/local/etc/dict.xdb /usr/local/etc/
+COPY --from=builder /usr/local/etc/rules*.txt /usr/local/etc/
+
+COPY --from=builder /usr/share/postgresql/16/extension/zhparser* /usr/share/postgresql/16/extension/
+COPY --from=builder /usr/lib/postgresql/16/lib/zhparser.so /usr/lib/postgresql/16/lib/
+
+RUN ldconfig
 
 COPY docker/init-zhparser.sql /docker-entrypoint-initdb.d/
