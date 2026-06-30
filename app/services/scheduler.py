@@ -6,22 +6,23 @@ import os
 import sys
 from pathlib import Path
 
-import redis.asyncio as redis
 from sqlalchemy import select
 
-from app.core.config import settings
 from app.core.database import AsyncSessionLocal
 from app.core.logging import get_logger
 from app.models.document import Document, DocumentStatus
 from app.services.document import get_document, update_document_status
 from app.services.chunk import insert_chunks
+from app.core.config import settings
+from app.core.constants import PARSE_SLOTS_KEY
+from app.utils.redis import Mutex, Semaphore
 
 logger = get_logger(__name__)
 
-# ---- 配置 ----
-MAX_CONCURRENT = 2       # 同时解析数（跨 worker 全局生效）
 MAX_RETRIES = 3           # 最大重试次数
-RETRY_DELAY_BASE = 5      # 退避基数（秒），指数递增: 5 → 10 → 20
+RETRY_DELAY_BASE = 5      # 重试退避基数（秒）
+
+_semaphore = Semaphore(PARSE_SLOTS_KEY, settings.MAX_CONCURRENT)
 
 # ---- 状态 ----
 _tasks: dict[int, asyncio.Task] = {}  # doc_id → task（所有未完成的）
@@ -30,22 +31,6 @@ _parsing: dict[int, asyncio.subprocess.Process] = {}  # doc_id → 正在运行�
 
 # worker 脚本路径
 _WORKER_SCRIPT = str(Path(__file__).resolve().parent / "_chunk_worker.py")
-
-
-_SLOT_KEY = "parse:slots"
-
-# 共享连接池（lifespan 启动时调用 _init_redis）
-_pool: redis.ConnectionPool | None = None
-
-
-async def _init_redis() -> None:
-    """初始化 Redis 连接池并预填信号量令牌（多 worker 安全：SET NX 保证只填一次）"""
-    global _pool
-    _pool = redis.ConnectionPool.from_url(settings.REDIS_URL, max_connections=50)
-    r = redis.Redis(connection_pool=_pool)
-    if await r.set("parse:slots:init", "1", nx=True, ex=10):
-        await r.delete(_SLOT_KEY)
-        await r.rpush(_SLOT_KEY, *[str(i) for i in range(1, MAX_CONCURRENT + 1)])
 
 
 def status() -> dict:
@@ -57,7 +42,7 @@ def status() -> dict:
         "waiting_count": len(waiting_doc_ids),
         "active": active_doc_ids,
         "active_count": len(active_doc_ids),
-        "max_concurrent": MAX_CONCURRENT,
+        "max_concurrent": settings.MAX_CONCURRENT,
         "max_retries": MAX_RETRIES,
     }
 
@@ -107,33 +92,21 @@ async def cancel_and_await(document_id: int) -> bool:
 
 # ========== 核心 ==========
 async def _run(document_id: int) -> None:
-    """Redis 分布式信号量限流 → 解析 → 释放"""
-    r = redis.Redis(connection_pool=_pool)
+    """抢信号量 → 解析 → 释放 → 失败重试"""
     slot: str | None = None
     try:
-        # BLPOP 阻塞等待可用槽位，每 30s 超时检查取消信号
-        while slot is None:
-            result = await r.blpop(_SLOT_KEY, timeout=30)
-            if result is not None:
-                _, slot = result  # (key, value)
-
+        slot = await _semaphore.acquire()
         _active.add(document_id)
         try:
             await _process_one(document_id)
         finally:
             _active.discard(document_id)
             if slot:
-                try:
-                    await r.rpush(_SLOT_KEY, slot)
-                except redis.RedisError:
-                    pass
+                await _semaphore.release(slot)
     except asyncio.CancelledError:
         await update_document_status(document_id, DocumentStatus.FAILED, error_message="用户取消")
         logger.info("Doc#%d cancelled", document_id)
     except Exception as exc:
-        import traceback
-        traceback.print_exc()
-        # ---- 重试 / 彻底失败 ----
         doc = await get_document(document_id)
         retry = (doc.retry_count or 0) + 1 if doc else 1
 
@@ -141,16 +114,13 @@ async def _run(document_id: int) -> None:
             delay = RETRY_DELAY_BASE * (2 ** (retry - 1))
             logger.warning("Doc#%d failed, retry %d/%d in %ds: %s",
                            document_id, retry, MAX_RETRIES, delay, exc)
-
             await update_document_status(document_id, DocumentStatus.PENDING,
                                          error_message=str(exc)[:2000], retry_count=retry)
-
             await asyncio.sleep(delay)
             schedule(document_id)
         else:
             logger.error("Doc#%d permanently failed after %d retries: %s",
                          document_id, retry, exc)
-
             await update_document_status(document_id, DocumentStatus.FAILED,
                                          error_message=str(exc)[:2000], retry_count=retry)
 
@@ -229,10 +199,8 @@ def _kill_process(document_id: int) -> None:
 async def recover_stuck() -> int:
     """
     扫描 DB 中卡在 PENDING / PROCESSING 的文档，重新调度。
-    在 lifespan 启动时调用，应对服务重启丢失内存状态。
     SET NX 防止多 worker 重复调度同一文档。
     """
-    r = redis.Redis(connection_pool=_pool)
     async with AsyncSessionLocal() as db:
         result = await db.execute(
             select(Document).where(
@@ -243,7 +211,7 @@ async def recover_stuck() -> int:
 
     scheduled = 0
     for doc in stuck:
-        if await r.set(f"recover:lock:{doc.id}", "1", nx=True, ex=60):
+        if await Mutex(f"recover:lock:{doc.id}").try_acquire():
             schedule(doc.id)
             scheduled += 1
 

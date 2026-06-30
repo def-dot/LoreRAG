@@ -7,11 +7,13 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from app.core.config import settings
+from app.core.constants import PARSE_SLOTS_KEY
 from app.core.exceptions import register_exception_handlers
 from app.core.logging import get_logger, setup_logging
 from app.core.middleware import access_log_middleware
 from app.routers import auth, document, external_api, items, rag, system, users, webhooks
-from app.services.scheduler import _init_redis, recover_stuck
+from app.services.scheduler import recover_stuck
+from app.utils.redis import Semaphore
 
 logger = get_logger(__name__)
 
@@ -21,19 +23,7 @@ logger = get_logger(__name__)
 async def lifespan(app: FastAPI) -> Any:
     # init_sentry()
     setup_logging()
-    # try:
-    #     import subprocess
-
-    #     subprocess.check_call(["alembic", "upgrade", "head"])
-    #     logger.info("%s started — DB migrated", settings.APP_NAME)
-    # except Exception:
-    #     logger.critical("Failed to initialize database", exc_info=True)
-    #     raise
-
-    # 初始化 Redis 连接池
-    await _init_redis()
-
-    # 恢复服务重启前卡住的文档
+    await Semaphore(PARSE_SLOTS_KEY).init(settings.MAX_CONCURRENT)
     await recover_stuck()
 
     yield

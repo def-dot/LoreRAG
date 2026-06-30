@@ -49,6 +49,7 @@ class Settings(BaseSettings):
     CHUNK_SIZE: int = 1500
     CHUNK_OVERLAP: int = 200
     MAX_FILE_SIZE: int = 50 * 1024 * 1024  # 最大文件大小：50MB
+    MAX_CONCURRENT: int = 2  # 并发解析数量
 
     # Redis
     REDIS_PASSWORD: str = ""
