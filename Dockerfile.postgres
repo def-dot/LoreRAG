@@ -28,8 +28,6 @@ FROM pgvector/pgvector:pg16
 
 USER root
 
-COPY --from=builder /etc/apt/ /etc/apt/
-
 COPY --from=builder /usr/local/lib/libscws* /usr/local/lib/
 COPY --from=builder /usr/local/etc/dict.xdb /usr/local/etc/
 COPY --from=builder /usr/local/etc/rules*.txt /usr/local/etc/
