@@ -4,11 +4,13 @@ import os
 from typing import Any
 
 from fastapi import APIRouter, HTTPException
+from sqlalchemy import func, select
 
-
+from app.core.database import AsyncSessionLocal
 from app.core.deps import SessionDep
 from app.core.logging import get_logger
 from app.core.response import UnifiedResponseRoute
+from app.models.document import Document, DocumentStatus
 from app.schemas.rag import (
     SearchRequest,
     SearchResponse,
@@ -35,9 +37,18 @@ async def search_knowledge_base(
 
 @router.get("/queue/status")
 async def get_queue_status() -> dict[str, Any]:
-    """查看解析队列状态"""
-    from app.services.scheduler import status
-    return status()
+    """查看解析队列状态（全局）"""
+    async with AsyncSessionLocal() as db:
+        result = await db.execute(
+            select(Document.status, func.count(Document.id)).group_by(Document.status)
+        )
+        counts = {row[0]: row[1] for row in result.all()}
+    return {
+        "pending": counts.get(DocumentStatus.PENDING, 0),
+        "processing": counts.get(DocumentStatus.PROCESSING, 0),
+        "completed": counts.get(DocumentStatus.COMPLETED, 0),
+        "failed": counts.get(DocumentStatus.FAILED, 0),
+    }
 
 
 @router.post("/queue/cancel/{document_id}")

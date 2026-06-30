@@ -23,9 +23,7 @@ logger = get_logger(__name__)
 async def lifespan(app: FastAPI) -> Any:
     # init_sentry()
     setup_logging()
-    await Semaphore(PARSE_SLOTS_KEY).init(settings.MAX_CONCURRENT)
     await recover_stuck()
-
     yield
     logger.info("Shutting down...")
 
