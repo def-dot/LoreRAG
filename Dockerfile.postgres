@@ -38,4 +38,4 @@ COPY --from=builder /usr/lib/postgresql/16/lib/zhparser.so /usr/lib/postgresql/1
 
 RUN ldconfig
 
-COPY docker/init-zhparser.sql /docker-entrypoint-initdb.d/
+COPY docker/init-extensions.sql /docker-entrypoint-initdb.d/
