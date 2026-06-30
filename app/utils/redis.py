@@ -3,7 +3,10 @@
 import redis.asyncio as redis
 
 from app.core.config import settings
+<<<<<<< HEAD
 from app.core.constants import PARSE_SLOTS_KEY
+=======
+>>>>>>> 0834f426b08b34b8cd07e4eafc07b28af3867e4d
 
 
 _pool: redis.ConnectionPool | None = None
@@ -16,7 +19,6 @@ def redis_client() -> redis.Redis:
             settings.REDIS_URL, max_connections=50
         )
     return redis.Redis(connection_pool=_pool)
-
 
 class Semaphore:
     """分布式信号量 — BLPOP/RPUSH 实现的 FIFO 公平队列"""
