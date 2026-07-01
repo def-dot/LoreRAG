@@ -53,7 +53,7 @@ async def insert_chunks(chunks: list[dict[str, Any]], document_id: int) -> int:
         return 0
 
     texts = [c["enriched_text"] for c in chunks]
-    dense_vectors = await asyncio.to_thread(encode_batch, texts)
+    dense_vectors = await encode_batch(texts)
 
     async with AsyncSessionLocal() as db:
         inserted_count = 0

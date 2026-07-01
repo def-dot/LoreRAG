@@ -62,8 +62,6 @@ async def _run(document_id: int) -> None:
 
         proc = await asyncio.create_subprocess_exec(
             sys.executable, _PARSE_SCRIPT, file_path, "--output", output_path,
-            stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.PIPE,
         )
         try:
             await proc.communicate()

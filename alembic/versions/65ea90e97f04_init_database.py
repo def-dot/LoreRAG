@@ -87,7 +87,7 @@ def upgrade() -> None:
         CREATE TRIGGER tsvectorupdate
         BEFORE INSERT OR UPDATE ON document_chunks
         FOR EACH ROW EXECUTE FUNCTION
-        tsvector_update_trigger(tsv_content, 'pg_catalog.chinese', raw_content)
+        tsvector_update_trigger(tsv_content, 'public.chinese', raw_content)
     """)
 
     op.create_table('items',
