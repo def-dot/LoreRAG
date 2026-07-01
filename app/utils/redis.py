@@ -57,6 +57,6 @@ class Mutex:
         self.key = key
         self.ttl = ttl
 
-    async def acquire(self) -> bool:
+    async def try_acquire(self) -> bool:
         r = redis_client()
         return bool(await r.set(self.key, "1", nx=True, ex=self.ttl))

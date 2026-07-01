@@ -4,28 +4,28 @@ import asyncio
 import json
 import os
 import sys
+import tempfile
 from pathlib import Path
 
 from sqlalchemy import select
 
+from app.core.config import settings
+from app.core.constants import PARSE_SLOTS_KEY, RECOVER_LOCK_KEY
 from app.core.database import AsyncSessionLocal
 from app.core.logging import get_logger
 from app.models.document import Document, DocumentStatus
 from app.services.document import get_document, update_document_status
 from app.services.chunk import insert_chunks
-from app.core.config import settings
-from app.core.constants import PARSE_SLOTS_KEY
 from app.utils.redis import Mutex, Semaphore
 
 logger = get_logger(__name__)
 
 _semaphore = Semaphore(PARSE_SLOTS_KEY, settings.MAX_CONCURRENT)
 
-# ---- 状态 ----
 _tasks: dict[int, asyncio.Task] = {}  # doc_id → task
 
-# worker 脚本路径
-_WORKER_SCRIPT = str(Path(__file__).resolve().parent / "_chunk_worker.py")
+# 文档解析脚本
+_PARSE_SCRIPT = str(Path(__file__).resolve().parent / "rag_chunk.py")
 
 
 def schedule(document_id: int) -> None:
@@ -38,6 +38,7 @@ def schedule(document_id: int) -> None:
 async def _run(document_id: int) -> None:
     """文档解析-分块-入库"""
     slot: str | None = None
+    proc = None
     try:
         slot = await _semaphore.acquire()
 
@@ -56,37 +57,43 @@ async def _run(document_id: int) -> None:
         await update_document_status(document_id, DocumentStatus.PROCESSING)
 
         # ---- 2. 文档解析 ----
+        output_fd, output_path = tempfile.mkstemp(suffix=".json")
+        os.close(output_fd)
+
         proc = await asyncio.create_subprocess_exec(
-            sys.executable, _WORKER_SCRIPT, file_path,
+            sys.executable, _PARSE_SCRIPT, file_path, "--output", output_path,
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,
         )
         try:
-            stdout, stderr = await proc.communicate()
-            if proc.returncode != 0:
-                err = stderr.decode(errors="replace")[-2000:]
-                raise RuntimeError(f"解析失败: {err}")
-            chunks = json.loads(stdout.decode())
+            await proc.communicate()
+
+            with open(output_path, encoding="utf-8") as f:
+                result = json.load(f)
+            if not result["ok"]:
+                raise RuntimeError(f"解析失败: {result['error']}")
+            chunks = result["data"]
         finally:
-            if proc.returncode is None:
-                try:
-                    proc.kill()
-                except ProcessLookupError:
-                    pass
+            os.remove(output_path)
 
         # ---- 3. 入库 ----
-        inserted_count = 0
-        if chunks:
-            inserted_count = await insert_chunks(chunks, document_id=document_id)
+        if not chunks:
+            await update_document_status(document_id, DocumentStatus.FAILED,
+                                         error_message="未解析出文本块")
+            return
 
+        inserted_count = await insert_chunks(chunks, document_id=document_id)
         if inserted_count == 0:
             await update_document_status(document_id, DocumentStatus.FAILED,
-                                         error_message="切片失败")
+                                         error_message="文本块入库失败")
             return
 
         await update_document_status(document_id, DocumentStatus.COMPLETED, chunk_count=inserted_count)
 
     except asyncio.CancelledError:
+        if proc is not None and proc.returncode is None:
+            # 终止解析子进程
+            proc.kill()
         await update_document_status(document_id, DocumentStatus.FAILED, error_message="用户取消")
     except Exception as exc:
         await update_document_status(document_id, DocumentStatus.FAILED,
@@ -110,19 +117,14 @@ async def recover_stuck() -> int:
         )
         stuck = result.scalars().all()
 
-    scheduled = 0
     for doc in stuck:
-        if await Mutex(f"recover:lock:{doc.id}").try_acquire():
+        if await Mutex(f"{RECOVER_LOCK_KEY}:{doc.id}").try_acquire():
             schedule(doc.id)
-            scheduled += 1
-
-    if scheduled:
-        logger.info("Recovered %d stuck document(s), re-scheduled (total stuck=%d)", scheduled, len(stuck))
-    return scheduled
+            logger.info("Recovered stuck document: %d", doc.id)
 
 
 async def cancel_and_await(document_id: int) -> bool:
-    """取消指定文档的解析并等待完成"""
+    """取消指定文档的解析，并等待完成"""
     task = _tasks.get(document_id)
     if task is None:
         return False

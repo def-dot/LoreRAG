@@ -1,6 +1,8 @@
 """文档智能切片器（单例复用）"""
 
+import sys
 import os
+import json
 from functools import lru_cache
 from pathlib import Path
 from typing import Any
@@ -67,3 +69,26 @@ def document_chunk(file_path: str, *, doc: DoclingDocument = None) -> list[dict[
         )
     logger.info("document chunk successed")
     return formatted
+
+
+if __name__ == "__main__":
+    import argparse
+    import traceback
+
+    from app.core.logging import setup_logging
+
+    parser = argparse.ArgumentParser()
+    parser.add_argument("file_path")
+    parser.add_argument("--output", required=True)
+    args = parser.parse_args()
+
+    result = {"ok": False, "error": ""}
+    try:
+        setup_logging()
+        chunks = document_chunk(args.file_path)
+        result = {"ok": True, "data": chunks}
+    except Exception as exc:
+        result = {"ok": False, "error": f"{exc}\n{traceback.format_exc()}"}
+
+    with open(args.output, "w", encoding="utf-8") as f:
+        json.dump(result, f, ensure_ascii=False, default=str)
