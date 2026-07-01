@@ -55,7 +55,7 @@ async def _run(document_id: int) -> None:
 
         await update_document_status(document_id, DocumentStatus.PROCESSING)
 
-        # ---- 2. 子进程解析 ----
+        # ---- 2. 文档解析 ----
         proc = await asyncio.create_subprocess_exec(
             sys.executable, _WORKER_SCRIPT, file_path,
             stdout=asyncio.subprocess.PIPE,
