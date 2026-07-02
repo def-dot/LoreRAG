@@ -30,6 +30,7 @@ class SearchResponse(BaseModel):
 
     results: list[SearchResult] = Field(description="检索结果")
     total: int = Field(description="结果数量")
+    tokens: list[str] = Field(default=[], description="BM25 查询分词，前端高亮用")
 
 
 class UploadResponse(BaseModel):

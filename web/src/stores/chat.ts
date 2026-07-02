@@ -9,6 +9,7 @@ export interface ChatMessage {
   content: string
   results?: SearchResult[]
   loading?: boolean
+  tokens?: string[]
 }
 
 export const useChatStore = defineStore('chat', () => {
@@ -18,16 +19,17 @@ export const useChatStore = defineStore('chat', () => {
   async function sendQuery(query: string) {
     messages.value.push({ role: 'user', content: query })
 
-    const assistantMsg: ChatMessage = { role: 'assistant', content: '', loading: true }
+    const assistantMsg: ChatMessage = { role: 'assistant', content: '', loading: true, userQuery: query }
     messages.value.push(assistantMsg)
 
     try {
       const res = await searchKnowledge(query, 5, mode.value)
-      const results = res.data.data.results
+      const { results, tokens } = res.data.data
 
       const last = messages.value[messages.value.length - 1]
       last.loading = false
       last.results = results
+      last.tokens = tokens
       last.content = results.length
         ? `找到 ${results.length} 条相关内容`
         : '未找到相关内容'

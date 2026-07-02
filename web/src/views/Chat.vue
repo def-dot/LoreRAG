@@ -10,6 +10,14 @@ const chatStore = useChatStore()
 const inputQuery = ref('')
 const chatContainer = ref<HTMLElement>()
 
+function highlightTokens(text: string, tokens: string[]): string {
+  if (!tokens.length) return text
+  const escaped = tokens
+    .sort((a, b) => b.length - a.length)
+    .map(t => t.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'))
+  return text.replace(new RegExp(escaped.join('|'), 'g'), '<mark>$&</mark>')
+}
+
 const modeOptions = [
   { label: '混合', value: 'hybrid' },
   { label: 'BM25', value: 'bm25' },
@@ -91,7 +99,7 @@ function clearChat() {
                   <div v-if="r.heading_context && r.heading_context !== 'Root'" class="result-heading">
                     {{ r.heading_context }}
                   </div>
-                  <div class="result-content" v-html="renderMarkdown(r.content)"></div>
+                  <div class="result-content" v-html="chatStore.mode === 'bm25' && msg.tokens ? highlightTokens(r.content, msg.tokens) : renderMarkdown(r.content)"></div>
                 </div>
               </div>
             </template>
@@ -317,6 +325,13 @@ function clearChat() {
 
 .result-content :deep(th) {
   background: var(--surface-3);
+}
+
+.result-content :deep(mark) {
+  background: #fef08a;
+  color: inherit;
+  padding: 0 2px;
+  border-radius: 2px;
 }
 
 .chat-input-area {

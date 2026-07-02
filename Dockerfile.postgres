@@ -36,4 +36,6 @@ COPY --from=builder /usr/local/etc/rules*.ini /usr/local/etc/
 COPY --from=builder /usr/share/postgresql/16/extension/zhparser* /usr/share/postgresql/16/extension/
 COPY --from=builder /usr/lib/postgresql/16/lib/zhparser.so /usr/lib/postgresql/16/lib/
 
+COPY docker/chinese.stop /usr/share/postgresql/16/tsearch_data/
+
 RUN ldconfig

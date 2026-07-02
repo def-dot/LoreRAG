@@ -71,15 +71,21 @@ def upgrade() -> None:
 
     # 向量 HNSW 索引（余弦相似度检索）
     op.execute("CREATE INDEX IF NOT EXISTS ix_document_chunks_dense_vector ON document_chunks USING hnsw (dense_vector vector_cosine_ops)")
-    # 中文分词搜索配置 + GIN 索引 + 触发器
+    # 中文分词搜索配置 + 停词字典 + GIN 索引 + 触发器
     op.execute("""
         DO $$
         BEGIN
+            -- 停词字典（文件: tsearch_data/chinese.stop）
+            IF NOT EXISTS (SELECT 1 FROM pg_ts_dict WHERE dictname = 'chinese_stop') THEN
+                CREATE TEXT SEARCH DICTIONARY chinese_stop (TEMPLATE = simple, STOPWORDS = chinese);
+            END IF;
+            -- 搜索配置
             IF NOT EXISTS (SELECT 1 FROM pg_ts_config WHERE cfgname = 'chinese') THEN
                 CREATE TEXT SEARCH CONFIGURATION chinese (PARSER = zhparser);
-                ALTER TEXT SEARCH CONFIGURATION chinese
-                    ADD MAPPING FOR n,v,a,i,e,l WITH simple;
             END IF;
+            ALTER TEXT SEARCH CONFIGURATION chinese
+                ALTER MAPPING FOR n,v,a,i,e,l,t
+                WITH chinese_stop, simple;
         END $$;
     """)
     op.create_index(op.f('ix_document_chunks_tsv_content'), 'document_chunks', ['tsv_content'], postgresql_using='gin')
