@@ -93,9 +93,9 @@ export function getDocumentPages(documentId: number) {
 }
 
 // 知识库检索
-export function searchKnowledge(query: string, topK = 5) {
+export function searchKnowledge(query: string, topK = 5, mode = 'hybrid') {
   return request.post<{ code: number; msg: string; data: { results: SearchResult[]; total: number } }>(
     '/rag/search',
-    { query, top_k: topK },
+    { query, top_k: topK, mode },
   )
 }

@@ -94,6 +94,54 @@ async def insert_chunks(chunks: list[dict[str, Any]], document_id: int) -> int:
         return inserted_count
 
 
+async def get_chunks_bm25(query_text: str, limit: int = 100) -> list[SearchResult]:
+    """BM25 全文检索 — tsvector + zhparser + OR 语义"""
+    bm25_sql = text("""
+            WITH qt AS (
+                SELECT to_tsquery('chinese', array_to_string(tsvector_to_array(to_tsvector('chinese', :query)), ' | ')) AS q
+            )
+            SELECT id, document_id, file_name, page_numbers, heading_context, raw_content,
+                   ts_rank(tsv_content, qt.q) AS score
+            FROM document_chunks, qt
+            WHERE tsv_content @@ qt.q
+            ORDER BY score DESC
+            LIMIT :limit
+        """)
+    async with AsyncSessionLocal() as db:
+        rows = (await db.execute(bm25_sql, {"query": query_text, "limit": limit})).fetchall()
+        return [_row_to_result(r) for r in rows]
+
+
+async def get_chunks_vector(query_vec: list[float], limit: int = 100) -> list[SearchResult]:
+    """稠密向量检索 — HNSW 余弦相似度"""
+    vector_sql = text("""
+            WITH qv AS (
+                SELECT CAST(:qvec AS vector) AS v
+            )
+            SELECT id, document_id, file_name, page_numbers, heading_context, raw_content,
+                   1.0 - (dense_vector <=> qv.v) AS score
+            FROM document_chunks, qv
+            ORDER BY dense_vector <=> qv.v
+            LIMIT :limit
+        """)
+    async with AsyncSessionLocal() as db:
+        rows = (await db.execute(vector_sql, {"qvec": _vector_to_str(query_vec), "limit": limit})).fetchall()
+        return [_row_to_result(r) for r in rows]
+
+
+def _row_to_result(row) -> SearchResult:
+    """将 DB 行转为 SearchResult"""
+    return SearchResult(
+        chunk_id=row[0],
+        document_id=row[1],
+        file_name=row[2],
+        page_numbers=row[3],
+        heading_context=row[4],
+        content=row[5],
+        score=row[6],
+    )
+
+
 async def get_chunks_hybrid_rrf(
     query_vec: list[float],
     query_text: str,
@@ -104,21 +152,25 @@ async def get_chunks_hybrid_rrf(
     """单 SQL 完成 稠密向量 + tsvector BM25 双路召回 + RRF 融合，一次数据库往返"""
     query_vec_str = _vector_to_str(query_vec)
     hybrid_sql = text("""
-            WITH dense_search AS (
+            WITH qv AS (
+                SELECT CAST(:qvec AS vector) AS v
+            ),
+            qt AS (
+                SELECT to_tsquery('chinese', array_to_string(tsvector_to_array(to_tsvector('chinese', :query)), ' | ')) AS q
+            ),
+            dense_search AS (
                 SELECT id, document_id, file_name, page_numbers, heading_context, raw_content,
-                       ROW_NUMBER() OVER (ORDER BY dense_vector <=> CAST(:qvec AS vector)) AS rank
-                FROM document_chunks
-                ORDER BY dense_vector <=> CAST(:qvec AS vector)
+                       ROW_NUMBER() OVER (ORDER BY dense_vector <=> qv.v) AS rank
+                FROM document_chunks, qv
+                ORDER BY dense_vector <=> qv.v
                 LIMIT :recall_count
             ),
             sparse_search AS (
                 SELECT id, document_id, file_name, page_numbers, heading_context, raw_content,
-                       ROW_NUMBER() OVER (
-                           ORDER BY ts_rank_cd(tsv_content, plainto_tsquery('chinese', :query)) DESC
-                       ) AS rank
-                FROM document_chunks
-                WHERE tsv_content @@ plainto_tsquery('chinese', :query)
-                ORDER BY ts_rank_cd(tsv_content, plainto_tsquery('chinese', :query)) DESC
+                       ROW_NUMBER() OVER (ORDER BY ts_rank(tsv_content, qt.q) DESC) AS rank
+                FROM document_chunks, qt
+                WHERE tsv_content @@ qt.q
+                ORDER BY ts_rank(tsv_content, qt.q) DESC
                 LIMIT :recall_count
             )
             SELECT
@@ -148,15 +200,4 @@ async def get_chunks_hybrid_rrf(
                 },
             )
         ).fetchall()
-        return [
-            SearchResult(
-                chunk_id=chunk[0],
-                document_id=chunk[1],
-                file_name=chunk[2],
-                page_numbers=chunk[3],
-                heading_context=chunk[4],
-                content=chunk[5],
-                score=chunk[6],
-            )
-            for chunk in rows
-        ]
+        return [_row_to_result(r) for r in rows]

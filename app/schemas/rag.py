@@ -10,6 +10,7 @@ class SearchRequest(BaseModel):
 
     query: str = Field(description="检索查询文本")
     top_k: int = Field(default=5, ge=1, le=20, description="返回结果数量")
+    mode: str = Field(default="hybrid", description="检索模式: bm25 | vector | hybrid")
 
 
 class SearchResult(BaseModel):

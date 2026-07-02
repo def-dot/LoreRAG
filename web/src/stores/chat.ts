@@ -2,6 +2,8 @@ import { defineStore } from 'pinia'
 import { ref } from 'vue'
 import { searchKnowledge, type SearchResult } from '../api/rag'
 
+export type SearchMode = 'bm25' | 'vector' | 'hybrid'
+
 export interface ChatMessage {
   role: 'user' | 'assistant'
   content: string
@@ -11,20 +13,18 @@ export interface ChatMessage {
 
 export const useChatStore = defineStore('chat', () => {
   const messages = ref<ChatMessage[]>([])
+  const mode = ref<SearchMode>('hybrid')
 
   async function sendQuery(query: string) {
-    // 添加用户消息
     messages.value.push({ role: 'user', content: query })
 
-    // 添加 loading 占位
     const assistantMsg: ChatMessage = { role: 'assistant', content: '', loading: true }
     messages.value.push(assistantMsg)
 
     try {
-      const res = await searchKnowledge(query)
+      const res = await searchKnowledge(query, 5, mode.value)
       const results = res.data.data.results
 
-      // 更新助手消息
       const last = messages.value[messages.value.length - 1]
       last.loading = false
       last.results = results
@@ -42,5 +42,5 @@ export const useChatStore = defineStore('chat', () => {
     messages.value = []
   }
 
-  return { messages, sendQuery, clear }
+  return { messages, mode, sendQuery, clear }
 })

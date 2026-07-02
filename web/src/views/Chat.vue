@@ -10,6 +10,12 @@ const chatStore = useChatStore()
 const inputQuery = ref('')
 const chatContainer = ref<HTMLElement>()
 
+const modeOptions = [
+  { label: '混合', value: 'hybrid' },
+  { label: 'BM25', value: 'bm25' },
+  { label: '向量', value: 'vector' },
+] as const
+
 const messages = computed(() => chatStore.messages)
 const canSend = computed(() => inputQuery.value.trim() && !messages.value.some((m) => m.loading))
 
@@ -95,6 +101,13 @@ function clearChat() {
     </div>
 
     <div class="chat-input-area">
+      <div class="mode-bar">
+        <el-radio-group v-model="chatStore.mode" size="small">
+          <el-radio-button v-for="m in modeOptions" :key="m.value" :value="m.value">
+            {{ m.label }}
+          </el-radio-button>
+        </el-radio-group>
+      </div>
       <el-input
         v-model="inputQuery"
         type="textarea"
@@ -309,6 +322,10 @@ function clearChat() {
 .chat-input-area {
   padding: 12px 0 0;
   border-top: 1px solid var(--border);
+}
+
+.mode-bar {
+  margin-bottom: 10px;
 }
 
 .input-actions {
