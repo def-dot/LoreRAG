@@ -9,7 +9,7 @@ logger = get_logger(__name__)
 
 
 async def chat(query: str, results: list[str] | None = None) -> str:
-    """调用 LLM 回答。配置缺失抛异常，网络错误返回友好提示。"""
+    """调用 LLM 回答"""
     if not settings.LLM_API_URL:
         raise RuntimeError("LLM_API_URL 未配置")
 
@@ -17,13 +17,13 @@ async def chat(query: str, results: list[str] | None = None) -> str:
         context = "\n\n---\n\n".join(
             f"[来源 {i + 1}]\n{r}" for i, r in enumerate(results)
         )
-        system = "你是一个知识库助手。根据参考资料回答用户问题。如果资料不足以回答，就说'资料中未找到相关信息'。回答简洁（200 字以内），引用来处标注来源编号如 [1] [2]。"
-        user = f"用户问题：{query}\n\n参考资料：\n{context}"
+        system = "根据参考资料回答问题。资料不足就说未找到。回答简洁，每个事实后面标注来源编号。"
+        user = f"问题：{query}\n\n参考资料：\n{context}\n\n请回答问题，在每个引用处标注来源编号如 [1] [2]。格式示例：'AI可用于故障检测 [1]，同时能优化流程 [2]。'"
     else:
         system = "你是一个智能助手。直接回答用户的问题，回答简洁（200 字以内）。"
         user = query
 
-    async with httpx.AsyncClient(timeout=60.0) as client:
+    async with httpx.AsyncClient(timeout=120.0) as client:
         try:
             response = await client.post(
                 f"{settings.LLM_API_URL}/chat/completions",

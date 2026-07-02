@@ -9,6 +9,7 @@ const md = new MarkdownIt({ html: false, breaks: true, linkify: true })
 const chatStore = useChatStore()
 const inputQuery = ref('')
 const chatContainer = ref<HTMLElement>()
+const showSources = ref<Record<number, boolean>>({})
 
 function highlightTokens(text: string, tokens: string[]): string {
   if (!tokens.length) return text
@@ -40,19 +41,29 @@ function renderCitations(text: string, msgIdx: number): string {
     (_, nums: string) => {
       const ids = nums.split(',').map((n: string) => n.trim())
       return ids.map((id: string) =>
-        `<a class="cite-link" href="#" data-ref="${msgIdx}-${id}">[${id}]</a>`
+        `<a class="cite-link" href="#" data-ref="${id}">[${id}]</a>`
       ).join('')
     }
   )
 }
 
-/** 委托点击：引用链接滚动到对应卡片 */
-function handleCiteClick(e: Event) {
+/** 委托点击：引用链接 → 展开来源区 + 滚动到对应卡片 */
+async function handleCiteClick(e: Event) {
   const target = e.target as HTMLElement
   if (!target.classList.contains('cite-link')) return
   e.preventDefault()
   const ref = target.dataset.ref
   if (!ref) return
+
+  // 展开来源折叠区
+  const section = target.closest('.bot-bubble')?.querySelector('.sources-section') as HTMLElement
+  if (section) {
+    const msgIdx = Number(section.dataset.msgIdx)
+    showSources.value[msgIdx] = true
+    await nextTick()
+  }
+
+  // 滚动到对应卡片
   const card = document.getElementById(`card-${ref}`)
   if (card) {
     card.scrollIntoView({ behavior: 'smooth', block: 'center' })
@@ -141,8 +152,13 @@ function clearChat() {
                 <div class="llm-answer-content" v-html="renderCitations(renderMarkdown(msg.answer), i)"></div>
               </div>
 
-              <div v-if="msg.results?.length" class="results-grid">
-                <div v-for="(r, ri) in msg.results" :key="ri" :id="`card-${i}-${ri + 1}`" class="result-card">
+              <div v-if="msg.results?.length" class="sources-section" :data-msg-idx="i">
+                <button v-if="msg.answer" class="sources-toggle" @click="showSources[i] = !showSources[i]">
+                  <span>参考来源（{{ msg.results.length }}）</span>
+                  <span :class="['arrow', { open: showSources[i] }]">▾</span>
+                </button>
+                <div :class="['results-grid', { collapsed: msg.answer && !showSources[i] }]">
+                <div v-for="(r, ri) in msg.results" :key="ri" :id="`card-${ri + 1}`" class="result-card">
                   <div class="card-top">
                     <span class="cite-num">{{ ri + 1 }}</span>
                     <div class="card-meta">
@@ -161,6 +177,7 @@ function clearChat() {
                       : renderMarkdown(r.content)"
                   ></div>
                 </div>
+              </div>
               </div>
 
               <div v-else class="no-results">未找到相关内容，试试换个问法或切换检索模式</div>
@@ -435,8 +452,44 @@ function clearChat() {
   flex-shrink: 0;
 }
 
+/* Sources toggle */
+.sources-section {
+  margin-top: 12px;
+}
+
+.sources-toggle {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  width: 100%;
+  padding: 8px 12px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--surface);
+  font-size: 13px;
+  color: var(--ink-3);
+  cursor: pointer;
+  transition: all 0.15s;
+}
+
+.sources-toggle:hover {
+  border-color: var(--brand);
+  color: var(--ink-1);
+}
+
+.arrow {
+  transition: transform 0.2s;
+  font-size: 12px;
+}
+
+.arrow.open {
+  transform: rotate(180deg);
+}
+
 /* Results */
-.results-grid { display: flex; flex-direction: column; gap: 10px; }
+.results-grid { display: flex; flex-direction: column; gap: 10px; margin-top: 10px; }
+
+.results-grid.collapsed { display: none; }
 
 .result-card {
   background: var(--surface);

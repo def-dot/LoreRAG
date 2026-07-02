@@ -56,7 +56,7 @@ async def search(query: str, top_k: int = 5, mode: str = "hybrid", use_llm: bool
     # ---- 第三阶段: LLM 总结 ----
     if use_llm:
         texts = [c.content or "" for c in ranked]
-        answer = await chat(query, texts if texts else None)
+        answer = await chat(query, texts)
 
     logger.info("[perf] total: %.2fs, mode=%s, llm=%s, top_k=%d",
                 time.perf_counter() - t0, mode, use_llm, top_k)
