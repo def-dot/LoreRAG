@@ -8,6 +8,7 @@ from app.core.database import AsyncSessionLocal
 from app.core.logging import get_logger
 from app.schemas.rag import SearchResult
 from app.services.embedding import encode
+from app.services.llm import chat
 from app.services.rerank import rerank
 from app.services.chunk import get_chunks_bm25, get_chunks_vector, get_chunks_hybrid_rrf
 
@@ -18,11 +19,11 @@ RRF_CANDIDATES = 50
 RRF_K = 60
 
 
-async def search(query: str, top_k: int = 5, mode: str = "hybrid") -> tuple[list[SearchResult], list[str]]:
-    """
-    知识库检索，返回 (结果列表, 查询分词 tokens)。
-    """
+async def search(query: str, top_k: int = 5, mode: str = "hybrid", use_llm: bool = False) -> tuple[list[SearchResult], list[str], str]:
+    """知识库检索，返回 (结果列表, 查询分词 tokens, LLM 回答)。"""
+    t0 = time.perf_counter()
     tokens: list[str] = []
+    answer = ""
 
     # ---- 第一阶段: 召回 ----
     if mode == "bm25":
@@ -41,16 +42,25 @@ async def search(query: str, top_k: int = 5, mode: str = "hybrid") -> tuple[list
         )
 
     if not candidates:
-        return [], tokens
+        return [], tokens, ""
 
-    # ---- 第二阶段: Reranker 精排；BM25 做批量归一化 ----
+    # ---- 第二阶段: Reranker 精排 ----
     if mode != "bm25":
         passages = [chunk.content or "" for chunk in candidates]
         rerank_scores = await rerank(query, passages)
         for candidate, score in zip(candidates, rerank_scores):
             candidate.score = score
 
-    return sorted(candidates, key=lambda x: x.score, reverse=True)[:top_k], tokens
+    ranked = sorted(candidates, key=lambda x: x.score, reverse=True)[:top_k]
+
+    # ---- 第三阶段: LLM 总结 ----
+    if use_llm:
+        texts = [c.content or "" for c in ranked]
+        answer = await chat(query, texts if texts else None)
+
+    logger.info("[perf] total: %.2fs, mode=%s, llm=%s, top_k=%d",
+                time.perf_counter() - t0, mode, use_llm, top_k)
+    return ranked, tokens, answer
 
 
 async def _tokenize_query(query: str) -> list[str]:

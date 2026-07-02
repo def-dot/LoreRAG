@@ -33,6 +33,34 @@ function renderMarkdown(text: string): string {
   return md.render(text)
 }
 
+/** 将 [1] [2,3] 引用转为可点击链接 */
+function renderCitations(text: string, msgIdx: number): string {
+  return text.replace(
+    /\[(\d+(?:,\d+)*)\]/g,
+    (_, nums: string) => {
+      const ids = nums.split(',').map((n: string) => n.trim())
+      return ids.map((id: string) =>
+        `<a class="cite-link" href="#" data-ref="${msgIdx}-${id}">[${id}]</a>`
+      ).join('')
+    }
+  )
+}
+
+/** 委托点击：引用链接滚动到对应卡片 */
+function handleCiteClick(e: Event) {
+  const target = e.target as HTMLElement
+  if (!target.classList.contains('cite-link')) return
+  e.preventDefault()
+  const ref = target.dataset.ref
+  if (!ref) return
+  const card = document.getElementById(`card-${ref}`)
+  if (card) {
+    card.scrollIntoView({ behavior: 'smooth', block: 'center' })
+    card.classList.add('highlight')
+    setTimeout(() => card.classList.remove('highlight'), 2000)
+  }
+}
+
 function formatScore(score: number): string {
   return (score * 100).toFixed(0) + '%'
 }
@@ -68,7 +96,7 @@ function clearChat() {
 <template>
   <div class="chat-page">
     <!-- 消息区 -->
-    <div ref="chatContainer" class="chat-messages">
+    <div ref="chatContainer" class="chat-messages" @click="handleCiteClick">
       <!-- 空状态 -->
       <div v-if="messages.length === 0" class="empty-state">
         <div class="empty-icon-wrap">
@@ -108,9 +136,15 @@ function clearChat() {
                 <span>{{ msg.content }}</span>
               </div>
 
+              <div v-if="msg.answer" class="llm-answer">
+                <div class="llm-answer-label">AI 总结</div>
+                <div class="llm-answer-content" v-html="renderCitations(renderMarkdown(msg.answer), i)"></div>
+              </div>
+
               <div v-if="msg.results?.length" class="results-grid">
-                <div v-for="(r, ri) in msg.results" :key="ri" class="result-card">
+                <div v-for="(r, ri) in msg.results" :key="ri" :id="`card-${i}-${ri + 1}`" class="result-card">
                   <div class="card-top">
+                    <span class="cite-num">{{ ri + 1 }}</span>
                     <div class="card-meta">
                       <span class="card-file" :title="r.file_name">{{ r.file_name }}</span>
                       <span v-if="r.page_numbers?.length" class="card-page">P{{ r.page_numbers[0] }}</span>
@@ -337,6 +371,59 @@ function clearChat() {
   border-bottom: 1px solid var(--border);
 }
 
+/* LLM answer */
+.llm-answer {
+  background: linear-gradient(135deg, var(--brand-soft), transparent);
+  border: 1px solid var(--brand);
+  border-radius: 10px;
+  padding: 14px;
+  margin-bottom: 14px;
+}
+
+.llm-answer-label {
+  font-size: 11px;
+  font-weight: 700;
+  color: var(--brand);
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  margin-bottom: 8px;
+}
+
+.llm-answer-content {
+  font-size: 14px;
+  line-height: 1.7;
+  color: var(--ink-1);
+}
+
+.llm-answer-content :deep(.cite-link) {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 18px;
+  height: 18px;
+  padding: 0 4px;
+  border-radius: 4px;
+  background: var(--brand-soft);
+  color: var(--brand);
+  font-size: 11px;
+  font-weight: 700;
+  text-decoration: none;
+  vertical-align: middle;
+  margin: 0 1px;
+  transition: background 0.15s;
+}
+
+.llm-answer-content :deep(.cite-link:hover) {
+  background: var(--brand);
+  color: #fff;
+}
+
+.result-card.highlight {
+  border-color: var(--brand);
+  box-shadow: 0 0 0 3px var(--brand-soft);
+  transition: box-shadow 0.3s, border-color 0.3s;
+}
+
 .mode-badge {
   display: inline-block;
   font-size: 10px;
@@ -363,9 +450,22 @@ function clearChat() {
 .card-top {
   display: flex;
   align-items: center;
-  justify-content: space-between;
   gap: 8px;
   padding: 10px 14px 0;
+}
+
+.cite-num {
+  flex-shrink: 0;
+  width: 22px;
+  height: 22px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 50%;
+  background: var(--brand);
+  color: #fff;
+  font-size: 11px;
+  font-weight: 700;
 }
 
 .card-meta { display: flex; flex-wrap: wrap; gap: 5px; font-size: 12px; min-width: 0; }

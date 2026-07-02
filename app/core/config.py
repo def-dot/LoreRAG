@@ -46,8 +46,12 @@ class Settings(BaseSettings):
     VLM_PROVIDER: str = "mock"  # "mock" | "qwen"
     VLM_API_URL: str = ""
     VLM_API_KEY: str = ""
-    CHUNK_SIZE: int = 1500
-    CHUNK_OVERLAP: int = 200
+
+    # LLM 总结
+    LLM_API_URL: str = "" 
+    LLM_API_KEY: str = ""
+    LLM_MODEL: str = ""
+    
     MAX_FILE_SIZE: int = 50 * 1024 * 1024  # 最大文件大小：50MB
     MAX_CONCURRENT: int = 2  # 并发解析数量
 

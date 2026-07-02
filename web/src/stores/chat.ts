@@ -11,6 +11,7 @@ export interface ChatMessage {
   loading?: boolean
   tokens?: string[]
   mode?: SearchMode
+  answer?: string
 }
 
 export const useChatStore = defineStore('chat', () => {
@@ -25,13 +26,14 @@ export const useChatStore = defineStore('chat', () => {
     messages.value.push(assistantMsg)
 
     try {
-      const res = await searchKnowledge(query, 5, mode.value)
-      const { results, tokens } = res.data.data
+      const res = await searchKnowledge(query, 5, mode.value, useLLM.value)
+      const { results, tokens, answer } = res.data.data
 
       const last = messages.value[messages.value.length - 1]
       last.loading = false
       last.results = results
       last.tokens = tokens
+      last.answer = answer
       last.content = results.length
         ? `找到 ${results.length} 条相关内容`
         : '未找到相关内容'
