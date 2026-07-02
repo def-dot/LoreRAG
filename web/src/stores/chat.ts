@@ -10,16 +10,18 @@ export interface ChatMessage {
   results?: SearchResult[]
   loading?: boolean
   tokens?: string[]
+  mode?: SearchMode
 }
 
 export const useChatStore = defineStore('chat', () => {
   const messages = ref<ChatMessage[]>([])
   const mode = ref<SearchMode>('hybrid')
+  const useLLM = ref(false)
 
   async function sendQuery(query: string) {
     messages.value.push({ role: 'user', content: query })
 
-    const assistantMsg: ChatMessage = { role: 'assistant', content: '', loading: true, userQuery: query }
+    const assistantMsg: ChatMessage = { role: 'assistant', content: '', loading: true, userQuery: query, mode: mode.value }
     messages.value.push(assistantMsg)
 
     try {
@@ -44,5 +46,5 @@ export const useChatStore = defineStore('chat', () => {
     messages.value = []
   }
 
-  return { messages, mode, sendQuery, clear }
+  return { messages, mode, useLLM, sendQuery, clear }
 })

@@ -1,5 +1,7 @@
 """RAG 检索服务 — 三种模式: BM25 / 向量 / 混合 + Reranker 精排"""
 
+import time
+
 from sqlalchemy import text
 
 from app.core.database import AsyncSessionLocal
@@ -41,7 +43,7 @@ async def search(query: str, top_k: int = 5, mode: str = "hybrid") -> tuple[list
     if not candidates:
         return [], tokens
 
-    # ---- 第二阶段: Reranker 精排（BM25 跳过） ----
+    # ---- 第二阶段: Reranker 精排；BM25 做批量归一化 ----
     if mode != "bm25":
         passages = [chunk.content or "" for chunk in candidates]
         rerank_scores = await rerank(query, passages)

@@ -16,7 +16,7 @@ async def rerank(query: str, passages: list[str]) -> list[float]:
             f"{TEI_RERANK_URL}/rerank",
             json={
                 "query": query,
-                "texts": passages,
+                "texts": [p[:1500] for p in passages],
                 "truncate": True,
             },
         )
